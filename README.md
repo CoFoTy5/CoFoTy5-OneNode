@@ -28,6 +28,8 @@
 
 ## 설치하기 (3단계)
 
+![메인 화면](docs/screen_setup.png)
+
 **1. 받기** — 이 페이지 오른쪽의 **Releases**(또는 [여기](../../releases/latest))에서 `CoFoTy5-OneNode_v….zip` 을 받습니다.
 
 **2. 압축 풀기** — 받은 파일을 **오른쪽 클릭 → [모두 압축 풀기]** 합니다.
