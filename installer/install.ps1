@@ -91,10 +91,24 @@ $btnNext = New-Button '다음 >' 765 512
 $btnCancel = New-Button '취소' 880 512
 $form.Controls.AddRange(@($btnBack, $btnNext, $btnCancel))
 
+# 맨 아래 버튼 줄 왼쪽: 제작자 · GitHub (누르면 이동)
+$name = '완성형5번유형'; $gh = 'github.com/CoFoTy5/CoFoTy5-OneNode'
+$pre1 = '제작 : '; $pre2 = '   GitHub : '
+$credit = New-Object System.Windows.Forms.LinkLabel
+$credit.Text = $pre1 + $name + $pre2 + $gh; $credit.Font = $FontS; $credit.AutoSize = $false
+$credit.Location = New-Object System.Drawing.Point(24, 521); $credit.Size = New-Object System.Drawing.Size(560, 20)
+$credit.BackColor = [System.Drawing.Color]::White; $credit.ForeColor = $ColDim
+$credit.LinkColor = $ColAccent; $credit.ActiveLinkColor = $ColAccent
+[void]$credit.Links.Add($pre1.Length, $name.Length, 'https://cft5.pages.dev/')
+[void]$credit.Links.Add(($pre1 + $name + $pre2).Length, $gh.Length, 'https://github.com/CoFoTy5/CoFoTy5-OneNode')
+$credit.add_LinkClicked({ param($s, $e) Start-Process ([string]$e.Link.LinkData) })
+$form.Controls.Add($credit)
+
 $pages = @{}
 function New-Page { $p = New-Object System.Windows.Forms.Panel; $p.Dock = 'Fill'; $p.Visible = $false
     if ($ImgWelcome) { $p.BackgroundImage = $ImgWelcome; $p.BackgroundImageLayout = 'None' }   # 모든 쪽 같은 그림 (끝 쪽만 설치가 성공하면 완료 그림)
     $body.Controls.Add($p); return $p }
+
 
 # ================================================================ 1. 안내
 $p1 = New-Page; $pages[1] = $p1
