@@ -1,0 +1,81 @@
+{
+  "name": "CoFoTy5 OneNode",
+  "version": "2.0.0",
+  "min_driver": 580,
+  "min_vram_gb": 6,
+  "need_free_gb": 22,
+  "tool_7zr": {
+    "url": "https://github.com/ip7z/7zip/releases/download/26.03/7zr.exe",
+    "sha256": "ad4c82fadcbdf93c03b4fc440f300509c7d60c5c2f4d183e35d9d70d6957037d",
+    "size": 602624
+  },
+  "comfyui": {
+    "label": "ComfyUI 포터블 v0.44.0 (NVIDIA)",
+    "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.44.0/ComfyUI_windows_portable_nvidia.7z",
+    "sha256": "7170c2db49c182a81adcc051e80234f99dd891656fb200737f87797876348f96",
+    "size": 2054382457,
+    "folder": "ComfyUI_windows_portable"
+  },
+  "nodes": [
+    {
+      "id": "lora",
+      "label": "LoRA Manager v1.2.8",
+      "url": "https://github.com/willmiao/ComfyUI-Lora-Manager/archive/refs/tags/v1.2.8.zip",
+      "folder": "ComfyUI-Lora-Manager"
+    },
+    {
+      "id": "detail",
+      "label": "Impact Pack 8.30 (손·얼굴 보정)",
+      "url": "https://github.com/ltdrdata/ComfyUI-Impact-Pack/archive/refs/tags/8.30.zip",
+      "folder": "ComfyUI-Impact-Pack"
+    },
+    {
+      "id": "detail",
+      "label": "Impact Subpack 1.3.4 (얼굴·손 찾기)",
+      "url": "https://github.com/ltdrdata/ComfyUI-Impact-Subpack/archive/refs/tags/1.3.4.zip",
+      "folder": "ComfyUI-Impact-Subpack"
+    }
+  ],
+  "models": [
+    {
+      "id": "base",
+      "label": "Anima 터보 v1.1 (그림 모델)",
+      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f973fc41ec7545364ac9776c2440285f43ff2a30/split_files/diffusion_models/anima-turbo-v1.1.safetensors",
+      "path": "models/diffusion_models/anima-turbo-v1.1.safetensors",
+      "sha256": "fba11953276b57edf59d1dc4f1857ac05aa079c56f982b4d7c20298d57d3f7eb",
+      "approx_mb": 4180
+    },
+    {
+      "id": "base",
+      "label": "Qwen3 0.6B (글 읽는 모델)",
+      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f973fc41ec7545364ac9776c2440285f43ff2a30/split_files/text_encoders/qwen_3_06b_base.safetensors",
+      "path": "models/text_encoders/qwen_3_06b_base.safetensors",
+      "sha256": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
+      "approx_mb": 1190
+    },
+    {
+      "id": "base",
+      "label": "Qwen-Image VAE (색 · 형태 복원)",
+      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f973fc41ec7545364ac9776c2440285f43ff2a30/split_files/vae/qwen_image_vae.safetensors",
+      "path": "models/vae/qwen_image_vae.safetensors",
+      "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+      "approx_mb": 254
+    },
+    {
+      "id": "detail",
+      "label": "얼굴 찾기 모델 (face_yolov8m)",
+      "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/face_yolov8m.pt",
+      "path": "models/ultralytics/bbox/face_yolov8m.pt",
+      "sha256": ["717923c19b3f4bbf5250b728f1fa6b2cb72a33aed1d236ea9caf0e21ad943e5f", "f02b8a23e6f12bd2c1b1f6714f66f984c728fa41ed749d033e7d6dea511ef70c"],
+      "approx_mb": 52
+    },
+    {
+      "id": "detail",
+      "label": "손 찾기 모델 (hand_yolov8s)",
+      "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/hand_yolov8s.pt",
+      "path": "models/ultralytics/bbox/hand_yolov8s.pt",
+      "sha256": ["70b540063fbc385736d8258970744a4afbc4cbf7932134bae3b24cdadeadec06", "5c4faf8d17286ace2c3d3346c6d0d4a0c8d62404955263a7ae95c1dd7eb877af", "30878cea9870964d4a238339e9dcff002078bbbaa1a058b07e11c167f67eca1c"],
+      "approx_mb": 22
+    }
+  ]
+}
