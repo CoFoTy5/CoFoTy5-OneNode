@@ -454,9 +454,15 @@ app.registerExtension({
       s1._head.insertBefore(accelChip, accelTest);
       const paintAccel = () => {
         const a = ACCEL.data;
-        if (!a || !a.installed) { accelChip.style.display = "none"; accelTest.style.display = "none"; return; }
+        if (!a) { accelChip.style.display = "none"; accelTest.style.display = "none"; return; }
         accelChip.style.display = "";
-        if (!a.ok) {
+        accelTest.textContent = a.installed ? "다시 시험" : "시험하기";
+        if (!a.installed) {
+          accelChip.textContent = "⚡ 가속 (시험 안 함)";
+          css(accelChip, { background: "transparent", color: C.dim, borderColor: C.line, textDecoration: "none", cursor: "pointer", opacity: ".85" });
+          accelChip.title = "아직 가속을 시험하지 않았습니다.\n눌러서 이 PC에서 되는지 시험합니다 (몇 초~1분).\n이 ComfyUI의 파이썬에 Triton · SageAttention이 설치되어 있어야 합니다.";
+          accelTest.style.display = "";
+        } else if (!a.ok) {
           accelChip.textContent = "⚡ 가속 사용 불가";
           css(accelChip, { background: "transparent", color: C.dim, borderColor: C.line, textDecoration: "line-through", cursor: "not-allowed", opacity: ".8" });
           accelChip.title = "가속을 쓸 수 없습니다" + (a.reason ? "\n이유: " + a.reason : "") + "\n그림 만들기는 평소처럼 됩니다.\n[다시 시험]으로 다시 확인할 수 있습니다.";
@@ -473,6 +479,7 @@ app.registerExtension({
       accelChip.onclick = async (e) => {
         e.stopPropagation();
         const a = ACCEL.data;
+        if (a && !a.installed) { accelTest.onclick(e); return; }
         if (!a || !a.ok) { toast("가속을 쓸 수 없습니다" + (a?.reason ? ": " + a.reason : ""), "warn", 7000); return; }
         await setAccel(!a.enabled);
       };
@@ -484,7 +491,7 @@ app.registerExtension({
           const a = await testAccel();
           if (a?.ok) toast("가속을 쓸 수 있습니다", "success");
           else toast("가속을 쓸 수 없습니다" + (a?.reason ? ": " + a.reason : ""), "warn", 8000);
-        } finally { delete accelTest.dataset.busy; accelTest.textContent = "다시 시험"; }
+        } finally { delete accelTest.dataset.busy; accelTest.textContent = ACCEL.data?.installed ? "다시 시험" : "시험하기"; }
       };
       paintAccel(); loadAccel();
       syncers.push(() => {

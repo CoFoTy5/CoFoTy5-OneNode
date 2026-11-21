@@ -2,6 +2,7 @@
 
 - 상태 파일: ComfyUI/user/cofoty5_accel.json  (설치 프로그램 · [다시 시험]이 accel_test.py로 씀)
     installed / ok / reason / enabled / runtime_error / tested / gpu …
+- 상태 파일이 없으면(설치 프로그램 없이 폴더만 복사한 경우) 화면에 '시험 안 함'으로 보이고, 눌러서 시험할 수 있습니다.
 - 시험을 통과(ok)했고 사용자가 켜 두었을 때(enabled)만 적용합니다.
 - 적용 방법: 모델 복제본의 transformer_options 에 attention 바꿔치기(optimized_attention_override)를 넣고,
   샘플링하는 동안만 torch fp16 누적을 켭니다. 원래 모델 · 설정은 건드리지 않습니다.
@@ -208,8 +209,6 @@ def _run_test():
 
 @routes.post("/cofoty5_onenode/accel/test")
 async def _test(request):
-    if not _load().get("installed"):
-        return web.json_response({**status(), "error": "가속 기능이 설치되어 있지 않습니다"})
     try:
         await asyncio.get_running_loop().run_in_executor(None, _run_test)
     except Exception as e:
