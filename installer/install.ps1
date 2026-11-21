@@ -263,7 +263,42 @@ function New-Check($text, $y, $checked, $tip) {
 $chkDetail = New-Check '손 · 얼굴 보정 (Impact Pack + 감지 모델, 약 0.6GB)' 184 $true '저장할 때 손과 얼굴을 찾아 한 번 더 다듬는 기능입니다.'
 $chkLora = New-Check 'LoRA Manager (LoRA 미리보기 · 정보 받기)' 232 $true 'LoRA 그림과 설명을 받아 보여 주는 관리 화면입니다. ComfyUI 위쪽 메뉴에서 엽니다.'
 $chkShortcut = New-Check '바탕화면에 바로가기 만들기' 280 $true '바탕화면의 [CoFoTy5 OneNode]를 두 번 누르면 시작합니다.'
-$lblNeed = New-Label '' 30 330 700 44 $FontS
+$chkAccel = New-Check '가속 기능 (그림 만들기가 빨라질 수 있음 · RTX 30 이상 권장)' 328 $true '설치 끝에 이 PC에서 되는지 시험하고, 안 되면 가속만 저절로 꺼 둡니다.'
+$chkAccel.Size = New-Object System.Drawing.Size(470, 24)
+$btnAccelInfo = New-Button '자세한 설명' 510 326 100 26
+$btnAccelInfo.Font = $FontS; $btnAccelInfo.BackColor = [System.Drawing.Color]::White
+$p3.Controls.Add($btnAccelInfo)
+$AccelInfo = @"
+■ 무슨 기능인가요
+   그림을 만드는 계산 일부를 더 빠른 방식(Sage Attention)으로 바꿉니다.
+   그래픽카드에 따라 그림 만들기가 빨라집니다. 결과 그림은 아주 조금 달라질 수 있습니다.
+
+■ 무엇이 설치되나요
+   • Triton · SageAttention (계산을 빠르게 하는 부품, 수십 MB)
+   • 파이썬 보조 파일 (include · libs 폴더, Triton이 씀)
+   ComfyUI 본체 · 그림 모델 · PyTorch는 건드리지 않습니다.
+
+■ 안 될 수 있는 경우
+   • 그래픽카드가 오래된 경우 (주로 RTX 20 시리즈 이하는 지원하지 않음)
+   • 부품끼리 버전이 맞지 않는 경우 (ComfyUI를 업데이트한 뒤 등)
+   • 인터넷 · 백신이 받기를 막은 경우
+
+■ 안 되면 어떻게 되나요
+   설치 끝에 이 PC에서 직접 시험해 보고, 안 되면 가속만 '사용 불가'로 꺼 둡니다.
+   그림 만들기는 평소처럼 됩니다. 노드의 [⚡ 가속] 표시를 눌러 켜고 끌 수 있고, 안 될 때는 [다시 시험]으로 다시 확인할 수 있습니다.
+"@
+$btnAccelInfo.add_Click({
+    $f = New-Object System.Windows.Forms.Form
+    $f.Text = '가속 기능 — 자세한 설명'; $f.ClientSize = New-Object System.Drawing.Size(620, 440)
+    $f.StartPosition = 'CenterParent'; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.MinimizeBox = $false
+    $f.BackColor = [System.Drawing.Color]::White; $f.Font = $FontN
+    $f.Controls.Add((New-Label $AccelInfo 20 16 590 370))
+    $ok = New-Button '확인' 500 392 100 34
+    $ok.add_Click({ $f.Close() }); $f.AcceptButton = $ok
+    $f.Controls.Add($ok)
+    [void]$f.ShowDialog($form)
+})
+$lblNeed = New-Label '' 30 376 700 44 $FontS
 $p3.Controls.Add($lblNeed)
 
 $btnBrowse.add_Click({
@@ -328,7 +363,7 @@ $btnLog.add_Click({ $txtLog.Visible = -not $txtLog.Visible; $lstSteps.Visible = 
 # ================================================================ 5. 끝
 $p5 = New-Page; $pages[5] = $p5
 $lblDoneT = New-Label '' 30 24 700 30 $FontT
-$lblDone = New-Label '' 30 66 700 220
+$lblDone = New-Label '' 30 62 700 232
 $btnRun = New-Button '지금 시작하기' 30 300 160 40
 $btnOpen = New-Button '설치 폴더 열기' 200 300 160 40
 $btnRun.Font = $FontB
@@ -517,6 +552,75 @@ $Worker = {
                     Log 'OneNode 노드 복사'
                     Run-Py "$PipBase -r `"$(Join-Path $dst 'requirements.txt')`"" 'OneNode 노드 (GPU 정보 표시)'
                 }
+                'accel' {
+                    # 가속은 '덤': 어디서 실패해도 설치는 계속하고, 가속만 '사용 불가'로 기록함
+                    $stateF = Join-Path $Comfy 'ComfyUI\user\cofoty5_accel.json'
+                    $py = Join-Path $Comfy 'python_embeded\python.exe'
+                    try {
+                        $A = $cfg.M.accel
+                        # 1) PyTorch 버전에 맞는 Triton 고르기 (PyTorch 2.10 → Triton 3.6 …)
+                        $sync.FileLabel = '가속: PyTorch 버전 확인 중…'; $sync.FileCur = 0; $sync.FileTotal = 0
+                        $tv = ''
+                        try { $tv = [string](& $py -s -c "import torch;print(torch.__version__)" 2>$null | Select-Object -Last 1) } catch {}
+                        $pin = [string]$A.triton_default
+                        if ($tv -match '^2\.(\d+)\.') { $mn = [int]$Matches[1]; if ($mn -ge 9) { $pin = "triton-windows<3.$($mn - 3)" } }
+                        Log "가속: PyTorch $tv → $pin"
+                        Run-Py "$PipBase `"$pin`"" 'Triton (가속)'
+                        # 2) SageAttention (다른 부품은 건드리지 않게 --no-deps)
+                        $whl = Join-Path $Dl ([string]$A.sage_file)
+                        Get-Url $A.sage_url $whl $A.sage_sha256 'SageAttention (가속)'
+                        Run-Py "$PipBase --no-deps `"$whl`"" 'SageAttention (가속)'
+                        # 3) Triton이 쓰는 파이썬 보조 파일 (include · libs) — 이미 있으면 그대로
+                        $pe = Join-Path $Comfy 'python_embeded'
+                        if (-not (Test-Path (Join-Path $pe 'include\Python.h')) -or -not (Test-Path (Join-Path $pe 'libs'))) {
+                            $zip = Join-Path $Dl 'python_include_libs.zip'
+                            Get-Url $A.pyinc_url $zip $A.pyinc_sha256 '파이썬 보조 파일 (가속)'
+                            $tmp = Join-Path $Work 'unzip_pyinc'
+                            if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
+                            Expand-Archive -Path $zip -DestinationPath $tmp -Force
+                            foreach ($nm in @('include', 'libs')) {
+                                $src = Get-ChildItem $tmp -Directory -Recurse | Where-Object { $_.Name -eq $nm } | Select-Object -First 1
+                                if ($src) {
+                                    $dst = Join-Path $pe $nm
+                                    New-Item -ItemType Directory -Force -Path $dst | Out-Null
+                                    Copy-Item -Path (Join-Path $src.FullName '*') -Destination $dst -Recurse -Force
+                                    Log "가속: 파이썬 보조 파일 넣음 ($nm)"
+                                } else { Log "가속: 보조 파일 안에 $nm 폴더가 없습니다" }
+                            }
+                            Remove-Item -Recurse -Force $tmp
+                        } else { Log '가속: 파이썬 보조 파일 있음' }
+                        # 4) 이 PC에서 실제로 되는지 시험 → 결과 파일 (노드가 읽음)
+                        $sync.FileLabel = '가속: 이 PC에서 되는지 시험하는 중… (1분 정도)'
+                        $test = Join-Path $Comfy 'ComfyUI\custom_nodes\cofoty5_onenode\accel_test.py'
+                        $tOut = Join-Path $Work 'accel_test.txt'
+                        $tp = Start-Process -FilePath $py -ArgumentList "-s `"$test`" --out `"$stateF`"" -WorkingDirectory $Comfy -WindowStyle Hidden -PassThru `
+                            -RedirectStandardOutput $tOut -RedirectStandardError "$tOut.err"
+                        $null = $tp.Handle
+                        while (-not $tp.HasExited) { Start-Sleep -Milliseconds 500; if ($sync.Cancel) { try { $tp.Kill() } catch {}; throw 'CANCELLED' } }
+                        $tp.WaitForExit()
+                        try { Log ("가속 시험: " + [string](Get-Content $tOut -ErrorAction SilentlyContinue | Select-Object -Last 1)) } catch {}
+                        try { Get-Content "$tOut.err" -ErrorAction SilentlyContinue | Select-Object -Last 5 | ForEach-Object { Log "  ! $_" } } catch {}
+                        $st = $null; try { $st = Get-Content -Raw -Encoding UTF8 $stateF | ConvertFrom-Json } catch {}
+                        if ($st -and $st.ok) { $sync.Accel = 'ok'; Log '가속: 사용 가능' }
+                        else {
+                            $why = $(if ($st -and $st.reason) { [string]$st.reason } else { '시험 결과를 읽지 못했습니다' })
+                            $sync.Accel = $why; Log "가속: 사용 불가 — $why"
+                            if ($st -and $st.stage -eq 'import') {   # 불러오기부터 안 되면 ComfyUI 시작을 방해하지 않게 지움
+                                try { Run-Py '-s -m pip uninstall -y --disable-pip-version-check sageattention' 'SageAttention 지우기 (가속 불가)' } catch { Log "가속: SageAttention을 지우지 못했습니다: $_" }
+                            }
+                        }
+                    } catch {
+                        if ("$_" -match 'CANCELLED') { throw }
+                        $why = "가속 부품을 설치하지 못했습니다 ($($_.Exception.Message))"
+                        Log "가속: 사용 불가(그림 만들기에는 영향 없음) — $why"
+                        $sync.Accel = $why
+                        try {
+                            $d = @{ installed = $true; ok = $false; reason = $why; enabled = $true; tested = (Get-Date -Format 'yyyy-MM-dd HH:mm') }
+                            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stateF) | Out-Null
+                            [IO.File]::WriteAllText($stateF, ($d | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+                        } catch {}
+                    }
+                }
                 'model' {
                     $m = $s.Model
                     try { Get-Url $m.url (Join-Path $Comfy ("ComfyUI\" + ($m.path -replace '/', '\'))) $m.sha256 $m.label }
@@ -543,6 +647,20 @@ $Worker = {
                         [IO.File]::WriteAllText($sb, $t, (New-Object Text.UTF8Encoding($false)))
                         Log 'CPU 모드로 설치: Start_OneNode.bat에 --cpu를 넣었습니다 (그림 만들기가 매우 느립니다)'
                     }
+                    # 실행 파일(CoFoTy5_OneNode.exe) 만들기: 이 PC의 .NET(csc.exe)으로 바로 컴파일 (실패해도 .bat으로 시작할 수 있음)
+                    $Exe = Join-Path $Inst 'CoFoTy5_OneNode.exe'
+                    try {
+                        $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+                        if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
+                        if (Test-Path $csc) {
+                            $src = Join-Path $cfg.Here 'files\launcher.cs'; $icoSrc = Join-Path $cfg.Here 'files\CoFoTy5.ico'
+                            $cscOut = Join-Path $Work 'csc_out.txt'
+                            $cscArgs = "/nologo /target:exe `"/win32icon:$icoSrc`" `"/out:$Exe`" `"$src`""
+                            $pr = Start-Process -FilePath $csc -ArgumentList $cscArgs -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $cscOut
+                            if ($pr.ExitCode -eq 0 -and (Test-Path $Exe)) { Log '실행 파일 만듦: CoFoTy5_OneNode.exe' }
+                            else { Log ('실행 파일을 만들지 못했습니다(Start_OneNode.bat으로 시작합니다): ' + ((Get-Content $cscOut -ErrorAction SilentlyContinue) -join ' ')) }
+                        } else { Log '.NET 컴파일러를 찾지 못해 실행 파일은 만들지 않았습니다(Start_OneNode.bat으로 시작합니다)' }
+                    } catch { Log "실행 파일 만들기 건너뜀: $($_.Exception.Message)" }
                     Copy-Item -Force (Join-Path $cfg.Here 'files\Uninstall_OneNode.bat') (Join-Path $Inst 'Uninstall_OneNode.bat')
                     Copy-Item -Force (Join-Path $cfg.Here 'files\uninstall.ps1') (Join-Path $Work 'uninstall.ps1')
                     Copy-Item -Force (Join-Path $cfg.Here 'files\README_folder.txt') (Join-Path $Inst 'README_설치폴더.txt')   # zip 안 파일 이름은 영문(압축 풀 때 글자 깨짐 방지)
@@ -550,7 +668,7 @@ $Worker = {
                         $desk = [Environment]::GetFolderPath('Desktop')
                         $sh = New-Object -ComObject WScript.Shell
                         $lnk = $sh.CreateShortcut((Join-Path $desk 'CoFoTy5 OneNode.lnk'))
-                        $lnk.TargetPath = Join-Path $Inst 'Start_OneNode.bat'
+                        $lnk.TargetPath = $(if (Test-Path $Exe) { $Exe } else { Join-Path $Inst 'Start_OneNode.bat' })
                         $lnk.WorkingDirectory = $Inst
                         $lnk.Description = 'CoFoTy5 OneNode (ComfyUI) 시작'
                         try {   # 도트 아이콘 (못 복사해도 바로가기는 기본 아이콘으로 만들어짐)
@@ -594,6 +712,7 @@ function Build-Steps {
         Add "노드: $($n.label)" 'node' 250 @{ Node = $n }
     }
     Add 'OneNode 노드 설치' 'simple' 20
+    if ($chkAccel.Checked -and $chkAccel.Enabled) { Add '가속 기능 설치 · 시험 (Triton · SageAttention)' 'accel' 150 }
     foreach ($m in $M.models) {
         if ($m.id -eq 'detail' -and -not $chkDetail.Checked) { continue }
         Add "모델: $($m.label)" 'model' ([double]$m.approx_mb) @{ Model = $m }
@@ -639,7 +758,7 @@ function Start-Install {
     $sync.Steps = Build-Steps; $sync.StepIdx = -1; $sync.Changed = $true
     $sync.Log = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
     $sync.FileCur = 0; $sync.FileTotal = 0; $sync.FileLabel = ''; $sync.Now = ''
-    $sync.Done = $false; $sync.Error = $null; $sync.Cancel = $false; $sync.Skipped = @()
+    $sync.Done = $false; $sync.Error = $null; $sync.Cancel = $false; $sync.Skipped = @(); $sync.Accel = ''
     $script:Sync = $sync
     $cfg = @{ Inst = $inst; M = $M; Here = $Here; PackRoot = $PackRoot; Shortcut = $chkShortcut.Checked; Detail = $chkDetail.Checked; Lora = $chkLora.Checked; CpuMode = ($script:GpuMissing -and $chkCpu.Checked) }
     $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'STA'; $rs.Open()
@@ -659,9 +778,9 @@ function Finish-Install {
         $msg = @"
 이제 [지금 시작하기]를 누르거나, 바탕화면의 [CoFoTy5 OneNode]를 두 번 누르면 됩니다.
 
-  • 검은 창(ComfyUI)이 뜨고, 잠시 뒤 인터넷 창에 작업 화면이 열립니다.
+  • 검은 창(ComfyUI)이 뜨고, 작업 화면이 열리면 검은 창은 작업 표시줄로 내려갑니다.
   • 처음 켤 때는 모델을 읽느라 1~2분 걸릴 수 있습니다.
-  • 검은 창을 닫으면 ComfyUI가 꺼집니다.
+  • 그 검은 창을 닫으면 ComfyUI가 꺼집니다.
   • 만든 그림은 아래 폴더에 저장됩니다.
       $inst\ComfyUI_windows_portable\ComfyUI\output
   • 지우고 싶을 때: 설치 폴더의 Uninstall_OneNode.bat (또는 폴더째 삭제)
@@ -669,6 +788,8 @@ function Finish-Install {
         if (@($s.Skipped).Count -gt 0) {
             $msg += "`n`n※ 받지 못해 건너뛴 보정 모델: " + (@($s.Skipped) -join ', ') + "`n   그림 만들기에는 영향이 없고, 손·얼굴 보정 기능만 빠집니다. 필요하면 ComfyUI의 models\ultralytics\bbox 폴더에 해당 파일을 직접 넣으세요."
         }
+        if ($s.Accel -eq 'ok') { $msg += "`n`n⚡ 가속 기능: 사용 가능 (노드의 [⚡ 가속] 표시로 켜고 끕니다)" }
+        elseif ($s.Accel) { $msg += "`n`n⚡ 가속 기능: 이 PC에서는 쓸 수 없어 꺼 두었습니다. 그림 만들기는 평소처럼 됩니다.`n   이유: " + $(if ($s.Accel.Length -gt 90) { $s.Accel.Substring(0, 90) + '…' } else { $s.Accel }) }
         $lblDone.Text = $msg
         $btnRun.Visible = $true; $btnOpen.Visible = $true
     } else {
@@ -696,7 +817,11 @@ function Show-Page($n) {
     switch ($n) {
         1 { $btnNext.Enabled = $chkLic.Checked }
         2 { Invoke-Checks }
-        3 { [void](Test-InstallDir) }
+        3 {
+            if ($script:GpuMissing) { $chkAccel.Checked = $false; $chkAccel.Enabled = $false; $btnAccelInfo.Enabled = $true }   # CPU 모드: 가속 없음
+            else { $chkAccel.Enabled = $true }
+            [void](Test-InstallDir)
+        }
         4 { $btnCancel.Enabled = $true }
     }
 }
@@ -725,7 +850,8 @@ $form.add_FormClosing({
     }
 })
 $btnRun.add_Click({
-    Start-Process -FilePath (Join-Path $script:Inst 'Start_OneNode.bat') -WorkingDirectory $script:Inst
+    $go = Join-Path $script:Inst 'CoFoTy5_OneNode.exe'; if (-not (Test-Path $go)) { $go = Join-Path $script:Inst 'Start_OneNode.bat' }
+    Start-Process -FilePath $go -WorkingDirectory $script:Inst
     $form.Close()
 })
 $btnOpen.add_Click({ Start-Process explorer.exe $script:Inst })

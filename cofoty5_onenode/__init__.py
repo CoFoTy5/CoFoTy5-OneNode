@@ -3,6 +3,7 @@ from . import cofoty5_sched  # noqa: F401  beta57 스케줄러 (이미 있으면
 from .simple_node import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
 from . import restart  # noqa: F401  /cofoty5_onenode/restart
 from . import monitor  # noqa: F401  /cofoty5_onenode/monitor
+from . import accel  # noqa: F401  /cofoty5_onenode/accel (가속 켜기 · 다시 시험)
 from . import workflow_seed  # noqa: F401  왼쪽 [워크플로] 즐겨찾기에 시작용 워크플로
 
 WEB_DIRECTORY = "./web"

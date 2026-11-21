@@ -24,6 +24,26 @@ const CHIP = { border: `1px solid ${C.line}`, borderRadius: "10px", padding: "1p
   color: C.text, whiteSpace: "nowrap", userSelect: "none", fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center" };
 const ON = { background: C.accent, borderColor: C.accent2, color: "#fff" };
 const toast = (msg, severity = "info", life = 4000) => { try { app.extensionManager?.toast?.add({ severity, summary: msg, life }); } catch {} };
+// ---------------------------------------------------------------- 가속 상태 (모든 OneNode가 같이 씀)
+const ACCEL = { data: null, paints: new Set() };
+const paintAllAccel = () => ACCEL.paints.forEach((f) => { try { f(); } catch {} });
+async function loadAccel() {
+  try { ACCEL.data = await (await api.fetchApi("/cofoty5_onenode/accel")).json(); } catch { ACCEL.data = null; }
+  paintAllAccel();
+}
+async function setAccel(on) {
+  try { ACCEL.data = await (await api.fetchApi("/cofoty5_onenode/accel", { method: "POST", body: JSON.stringify({ enabled: on }) })).json(); }
+  catch { toast("가속 설정을 바꾸지 못했습니다", "warn"); }
+  if (ACCEL.data?.error) toast(ACCEL.data.error, "warn");
+  paintAllAccel();
+}
+async function testAccel() {
+  try { ACCEL.data = await (await api.fetchApi("/cofoty5_onenode/accel/test", { method: "POST" })).json(); }
+  catch { toast("시험을 실행하지 못했습니다", "warn"); }
+  if (ACCEL.data?.error) toast(ACCEL.data.error, "warn");
+  paintAllAccel();
+  return ACCEL.data;
+}
 const url = (p) => (api.apiURL ? api.apiURL(p) : "/api" + p);
 const prevURL = (name) => url("/cofoty5_onenode/lora_preview?name=" + encodeURIComponent(name));
 const HIDE = ["positive", "negative", "width", "height", "batch", "loras", "seed_value", "random_seed", "model", "steps", "cfg", "sampler",
@@ -426,6 +446,47 @@ app.registerExtension({
       const typeBadge = h("span", { padding: "1px 9px", borderRadius: "9px", fontSize: "11px", fontWeight: "800", letterSpacing: ".4px", marginLeft: "4px",
         color: "#fff", whiteSpace: "nowrap", lineHeight: "17px" });
       s1._head.insertBefore(typeBadge, s1._head.children[3] || null);
+      // 가속(Sage Attention) 스위치 — 설치할 때 시험을 통과했을 때만 켤 수 있음
+      const accelChip = h("span", { ...CHIP, fontSize: "10px", padding: "0 7px", lineHeight: "16px", fontWeight: "700", display: "none", marginLeft: "auto" });   // 제목 줄 오른쪽 끝으로
+      const accelTest = h("span", { ...CHIP, fontSize: "10px", padding: "0 7px", lineHeight: "16px", display: "none" }, "다시 시험");
+      accelTest.title = "가속이 이 PC에서 되는지 다시 확인합니다 (몇 초~1분)";
+      s1._head.insertBefore(accelTest, typeBadge.nextSibling);
+      s1._head.insertBefore(accelChip, accelTest);
+      const paintAccel = () => {
+        const a = ACCEL.data;
+        if (!a || !a.installed) { accelChip.style.display = "none"; accelTest.style.display = "none"; return; }
+        accelChip.style.display = "";
+        if (!a.ok) {
+          accelChip.textContent = "⚡ 가속 사용 불가";
+          css(accelChip, { background: "transparent", color: C.dim, borderColor: C.line, textDecoration: "line-through", cursor: "not-allowed", opacity: ".8" });
+          accelChip.title = "가속을 쓸 수 없습니다" + (a.reason ? "\n이유: " + a.reason : "") + "\n그림 만들기는 평소처럼 됩니다.\n[다시 시험]으로 다시 확인할 수 있습니다.";
+          accelTest.style.display = "";
+        } else {
+          const on = a.enabled;
+          accelChip.textContent = on ? "⚡ 가속 켜짐" : "⚡ 가속 꺼짐";
+          css(accelChip, on ? { ...ON, textDecoration: "none", cursor: "pointer", opacity: "1" } : { background: "transparent", color: C.dim, borderColor: C.line, textDecoration: "none", cursor: "pointer", opacity: "1" });
+          accelChip.title = (on ? "가속을 쓰고 있습니다 (Sage Attention)" : "가속을 끈 상태입니다") + "\n눌러서 켜기 / 끄기" + (a.gpu ? "\n" + a.gpu : "") + (a.tested ? " · 시험 " + a.tested : "");
+          accelTest.style.display = "none";
+        }
+      };
+      ACCEL.paints.add(paintAccel);
+      accelChip.onclick = async (e) => {
+        e.stopPropagation();
+        const a = ACCEL.data;
+        if (!a || !a.ok) { toast("가속을 쓸 수 없습니다" + (a?.reason ? ": " + a.reason : ""), "warn", 7000); return; }
+        await setAccel(!a.enabled);
+      };
+      accelTest.onclick = async (e) => {
+        e.stopPropagation();
+        if (accelTest.dataset.busy) return;
+        accelTest.dataset.busy = "1"; accelTest.textContent = "시험 중…";
+        try {
+          const a = await testAccel();
+          if (a?.ok) toast("가속을 쓸 수 있습니다", "success");
+          else toast("가속을 쓸 수 없습니다" + (a?.reason ? ": " + a.reason : ""), "warn", 8000);
+        } finally { delete accelTest.dataset.busy; accelTest.textContent = "다시 시험"; }
+      };
+      paintAccel(); loadAccel();
       syncers.push(() => {
         const t = curType(), f = ckFam();
         if (t === "anima") { typeBadge.textContent = "ANIMA"; css(typeBadge, { background: C.accent, border: `1px solid ${C.accent2}` }); typeBadge.title = "Anima 모델 (diffusion_models + 텍스트 인코더 + VAE)"; }

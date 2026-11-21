@@ -34,6 +34,7 @@ import nodes
 from aiohttp import web
 from server import PromptServer
 
+from . import accel
 from .lora_info import LoraLibrary
 from .lora_paths import resolve_lora
 from .oscmd import open_folder
@@ -346,7 +347,11 @@ def _scale16(image, scale):
 
 
 def _sample(model, seed, steps, cfg, sa, sc, pos, neg, latent, denoise):
-    return nodes.common_ksampler(model, seed, steps, cfg, sa, sc, pos, neg, latent, denoise=denoise)[0]
+    model = accel.patch(model)   # 가속이 켜져 있으면 Sage를 쓰는 복제본 (아니면 그대로)
+    with accel.fp16_ctx():
+        out = nodes.common_ksampler(model, seed, steps, cfg, sa, sc, pos, neg, latent, denoise=denoise)[0]
+    accel.after_sample()
+    return out
 
 
 # ---------------------------------------------------------------- 손·얼굴 보정 (Impact Pack)
@@ -412,7 +417,9 @@ def run_detail(kind, image, model, clip, vae, pos, neg, seed, steps, cfg, sa, sc
     spec = FD.INPUT_TYPES()
     allowed = set((spec.get("required") or {}).keys()) | set((spec.get("optional") or {}).keys())
     kw = {k: v for k, v in kw.items() if k in allowed}
-    out = getattr(FD(), FD.FUNCTION)(**kw)
+    kw["model"] = accel.patch(kw.get("model"))
+    with accel.fp16_ctx():
+        out = getattr(FD(), FD.FUNCTION)(**kw)
     return out[0], True
 
 

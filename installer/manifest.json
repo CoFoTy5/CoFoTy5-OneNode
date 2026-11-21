@@ -1,6 +1,6 @@
 {
   "name": "CoFoTy5 OneNode",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "built": "2026-11-19",
   "min_driver": 580,
   "min_vram_gb": 6,
@@ -37,6 +37,15 @@
       "folder": "ComfyUI-Impact-Subpack"
     }
   ],
+  "accel": {
+    "label": "가속 (Triton + SageAttention)",
+    "triton_default": "triton-windows<3.7",
+    "sage_url": "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl",
+    "sage_file": "sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl",
+    "sage_sha256": "f7261c53a1d46202059daff6b8feac5ee806274d47e3e7fb7abf8c5f6d410c92",
+    "pyinc_url": "https://github.com/woct0rdho/triton-windows/releases/download/v3.0.0-windows.post1/python_3.13.2_include_libs.zip",
+    "pyinc_sha256": "e3e8c3abb17ea8de1cd2cd264ad15aae3de5eb7dc61ab37cb1a3d07f9c86238d"
+  },
   "models": [
     {
       "id": "base",
