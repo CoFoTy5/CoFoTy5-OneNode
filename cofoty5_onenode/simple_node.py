@@ -760,7 +760,15 @@ async def _first_run(request):
                 f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
         except Exception as e:
             print("[CoFoTy5 OneNode] first_run 표시 파일을 못 만들었습니다:", e)
-    return web.json_response({"fresh": fresh})
+    # 기존 ComfyUI에 추가 설치한 뒤 처음 켤 때 한 번: 시작용 워크플로를 새 탭으로 열기 (표시 파일 open_workflow.once)
+    once = os.path.join(HERE, "open_workflow.once")
+    open_wf = os.path.exists(once)
+    if open_wf:
+        try:
+            os.remove(once)
+        except Exception as e:
+            print("[CoFoTy5 OneNode] open_workflow 표시 파일을 못 지웠습니다:", e)
+    return web.json_response({"fresh": fresh, "open": open_wf})
 
 
 @routes.get("/cofoty5_onenode/info")

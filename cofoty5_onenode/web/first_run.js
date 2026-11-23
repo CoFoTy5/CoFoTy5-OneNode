@@ -2,6 +2,7 @@
 //  - 처음 한 번만: 화면이 비어 있거나 ComfyUI 기본 예제(저장 안 된 새 탭 + 기본 노드만)라면 지우고 CoFoTy5 OneNode ® 노드를 놓음
 //    (사용자가 저장한 워크플로·다른 노드팩 노드가 있는 화면은 건드리지 않음)
 //  - "처음"은 서버의 표시 파일(first_run.done) 기준 — 새로 설치할 때마다 한 번. 그 뒤로는 손대지 않음. 메뉴 CoFoTy5 OneNode › OneNode 노드 새로 놓기 로 언제든 다시 놓을 수 있음
+//  - 기존 ComfyUI에 추가 설치한 경우(open_workflow.once): 화면을 지우지 않고, 저장된 시작용 워크플로를 새 탭으로 한 번 엶
 import { app } from "../../scripts/app.js";
 
 const NODE = "CoFoTy5_OneNode";
@@ -45,6 +46,21 @@ export function fitNode(n) {
   } catch (e) { console.warn("[cofoty5_onenode] fit", e); }
 }
 
+// 저장된 시작용 워크플로(왼쪽 [워크플로] ★ 즐겨찾기)를 자기 탭으로 열기 — 지금 보던 탭은 건드리지 않음
+//  (탭이 없는 아주 옛 화면이면 지금 화면을 덮어쓰게 되므로 열지 않음. 즐겨찾기에서 열면 됨)
+const WF_NAME = "CoFoTy5 OneNode";
+async function openStarter() {
+  try {
+    if (!app.extensionManager?.workflow) return;
+    const res = await fetch("/api/userdata/" + encodeURIComponent("workflows/" + WF_NAME + ".json"));
+    if (!res.ok) return;
+    const data = await res.json();
+    await app.loadGraphData(data, true, true, WF_NAME);
+    const n = nodesOf(app.graph).find((x) => x.type === NODE);
+    if (n) setTimeout(() => fitNode(n), 80);
+  } catch (e) { console.warn("[cofoty5_onenode] open starter", e); }
+}
+
 function placeNode(clear) {
   const LG = globalThis.LiteGraph;
   if (!LG) return;
@@ -81,9 +97,10 @@ app.registerExtension({
     // 예전에 같은 주소(127.0.0.1:8188)로 ComfyUI를 열어 본 브라우저여도 새로 설치하면 다시 놓임
     if (this._asked) return;
     this._asked = true;
-    let fresh = false;
-    try { fresh = !!(await (await fetch("/cofoty5_onenode/first_run")).json()).fresh; } catch {}
-    if (!fresh) return;
+    let r = {};
+    try { r = (await (await fetch("/cofoty5_onenode/first_run")).json()) || {}; } catch {}
+    if (r.open) { setTimeout(openStarter, 600); return; }   // 기존 ComfyUI에 추가 설치: 새 탭으로 한 번 열기
+    if (!r.fresh) return;
     setTimeout(() => { if (isStockOrEmpty()) placeNode(true); }, 300);
   },
 });

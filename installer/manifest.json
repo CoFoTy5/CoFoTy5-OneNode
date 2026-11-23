@@ -1,7 +1,7 @@
 {
   "name": "CoFoTy5 OneNode",
-  "version": "2.1.0",
-  "built": "2026-11-19",
+  "version": "2.2.0",
+  "built": "2026-11-23",
   "min_driver": 580,
   "min_vram_gb": 6,
   "need_free_gb": 22,
