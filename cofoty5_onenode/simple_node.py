@@ -246,7 +246,7 @@ def parse_auto(raw):
         return {}
     mode = d.get("mode") if d.get("mode") in ("save", "upscale", "watch") else "save"
     return {"tags": str(d.get("tags") or "").strip(), "label": str(d.get("label") or "").strip(), "mode": mode,
-            "i": int(d.get("i") or 0), "n": int(d.get("n") or 0)}
+            "i": int(d.get("i") or 0), "n": int(d.get("n") or 0), "key": str(d.get("key") or "")[:300]}
 
 
 def _join(*parts):
@@ -547,7 +547,8 @@ class CoFoTy5OneNode:
                 "clip_skip": ("INT", {"default": 2, "min": 1, "max": 12}),
                 "toggles": ("STRING", {"default": "[]"}),  # 구도 버튼으로 켠 태그 (본 프롬프트 뒤, 배경 앞)
                 "auto": ("STRING", {"default": ""}),  # ④ 목록으로 연속 생성: 지금 항목 {"tags","label","mode","i","n"}
-                "lora_prompt": ("STRING", {"multiline": True, "default": ""}),  # 로라 프롬프트(작가 태그 등): 품질 바로 뒤에 무조건 들어감 · LoRA 세트와 같이 저장
+                "lora_prompt": ("STRING", {"multiline": True, "default": ""}),  # 로라 프롬프트(작가 태그 등): 품질 바로 뒤에 들어감 · LoRA 세트와 같이 저장
+                "lora_prompt_on": ("BOOLEAN", {"default": True}),  # 작가 태그 칸 앞 체크: 끄면 글자는 남기고 생성에만 안 씀
             },
             "hidden": {"unique_id": "UNIQUE_ID", "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
         }
@@ -583,8 +584,10 @@ class CoFoTy5OneNode:
     def run(self, positive, negative, width, height, batch, loras, seed_value, random_seed, model, steps, cfg, sampler, scheduler,
             text_encoder, vae, quality_on, quality, up_scale, up_denoise, up_sampler, up_scheduler,
             face_fix, hand_fix, face_denoise, hand_denoise, save_folder, save_name, date_folder, extra, action, pick, src="",
-            model_type="anima", ckpt="", clip_skip=2, toggles="[]", auto="", lora_prompt="", unique_id=None, prompt=None, extra_pnginfo=None):
+            model_type="anima", ckpt="", clip_skip=2, toggles="[]", auto="", lora_prompt="", lora_prompt_on=True, unique_id=None, prompt=None, extra_pnginfo=None):
         SA, SC = _samplers(), _schedulers()
+        if not lora_prompt_on:  # 칸 앞 체크를 끄면 작가 태그 칸은 없는 것처럼
+            lora_prompt = ""
         sampler, up_sampler = _ok(sampler, SA, "euler"), _ok(up_sampler, SA, "euler")
         scheduler, up_scheduler = _ok(scheduler, SC, "simple"), _ok(up_scheduler, SC, "simple")
         key = str(unique_id)
@@ -619,7 +622,9 @@ class CoFoTy5OneNode:
             note = f"자동 {tag} · {len(saved)}장 {'업스케일 ' if how == 'upscale' else ''}저장"
             print(f"{LOG} {note}")
             res["ui"].update({"cofoty5_saved": saved, "cofoty5_msg": [note], "cofoty5_pick": [0],
-                              "cofoty5_auto": [{"i": item.get("i", 0), "n": item.get("n", 0), "label": item.get("label", ""), "count": len(saved)}]})
+                              "cofoty5_auto": [{"i": item.get("i", 0), "n": item.get("n", 0), "label": item.get("label", ""), "count": len(saved),
+                                                "key": item.get("key", ""), "prompt": last.get("positive_clean", ""), "neg": last.get("negative", ""),
+                                                "loras": [f"{os.path.splitext(os.path.basename(str(n).replace(chr(92), '/')))[0]}:{w:g}" for n, w in last.get("loras", [])]}]})
             return res
 
         # ---------- 고른 한 장: 업스케일 저장 / 그대로 저장 ----------
@@ -711,7 +716,8 @@ class CoFoTy5OneNode:
         ex_clean, _ = split_loras(extra)
         auto_clean, _ = split_loras((item or {}).get("tags", ""))
         lp_clean, _ = split_loras(lora_prompt or "")
-        pos_clean = _join(lp_clean, pos_clean, ", ".join(parse_toggles(toggles)), auto_clean, ex_clean)
+        # 이미지에 적히는 프롬프트(PNG 정보)는 실제로 쓴 글과 같게: 품질 칸(체크 켜짐)도 맨 앞에 넣음
+        pos_clean = _join(quality if quality_on else "", lp_clean, pos_clean, ", ".join(parse_toggles(toggles)), auto_clean, ex_clean)
         _CACHE[key] = {"images": images, "seed": seed, "positive": positive, "positive_clean": pos_clean,
                        "negative": negative, "loras": loras, "lora_json": lora_json, "extra": extra,
                        "toggles": toggles, "model_type": model_type, "lora_prompt": lora_prompt,
@@ -760,15 +766,7 @@ async def _first_run(request):
                 f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
         except Exception as e:
             print("[CoFoTy5 OneNode] first_run 표시 파일을 못 만들었습니다:", e)
-    # 기존 ComfyUI에 추가 설치한 뒤 처음 켤 때 한 번: 시작용 워크플로를 새 탭으로 열기 (표시 파일 open_workflow.once)
-    once = os.path.join(HERE, "open_workflow.once")
-    open_wf = os.path.exists(once)
-    if open_wf:
-        try:
-            os.remove(once)
-        except Exception as e:
-            print("[CoFoTy5 OneNode] open_workflow 표시 파일을 못 지웠습니다:", e)
-    return web.json_response({"fresh": fresh, "open": open_wf})
+    return web.json_response({"fresh": fresh})
 
 
 @routes.get("/cofoty5_onenode/info")
@@ -965,6 +963,48 @@ async def _items_rows(request):
 async def _items_open(request):
     try:
         return web.json_response({"opened": open_folder(_item_dir())})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+
+TRASH_DIR = "_onenode_trash"  # output 안: 연속 생성 결과 창에서 지운 그림 (다시 누르면 제자리로 복원)
+
+
+@routes.post("/cofoty5_onenode/trash")
+async def _trash(request):
+    """연속 생성 결과 창의 [삭제] / [복원]. 지우면 output/_onenode_trash/(원래 폴더) 로 옮기고, 복원하면 제자리로"""
+    try:
+        d = await request.json()
+
+        def work():
+            out_root = os.path.realpath(folder_paths.get_output_directory())
+            sub = "/".join(p for p in re.split(r"[\\/]+", str(d.get("subfolder") or "")) if p and p not in (".", ".."))
+            name = os.path.basename(str(d.get("filename") or ""))
+            if not name:
+                raise ValueError("파일 이름이 없습니다")
+            if d.get("op") == "restore":
+                if sub == TRASH_DIR or sub.startswith(TRASH_DIR + "/"):
+                    sub = sub[len(TRASH_DIR):].lstrip("/")
+                src_rel, dst_rel = "/".join(x for x in (TRASH_DIR, sub) if x), sub
+            else:
+                src_rel, dst_rel = sub, "/".join(x for x in (TRASH_DIR, sub) if x)
+            src = os.path.realpath(os.path.join(out_root, *src_rel.split("/"), name)) if src_rel else os.path.realpath(os.path.join(out_root, name))
+            dst_dir = os.path.realpath(os.path.join(out_root, *dst_rel.split("/"))) if dst_rel else out_root
+            if not (src.startswith(out_root + os.sep) and (dst_dir == out_root or dst_dir.startswith(out_root + os.sep))):
+                raise ValueError("output 폴더 밖의 파일은 다룰 수 없습니다")
+            if not os.path.isfile(src):
+                raise FileNotFoundError(f"파일이 없습니다: {name}")
+            os.makedirs(dst_dir, exist_ok=True)
+            stem, ext = os.path.splitext(name)
+            fname, k = name, 2
+            while os.path.exists(os.path.join(dst_dir, fname)):
+                fname, k = f"{stem}({k}){ext}", k + 1
+            shutil.move(src, os.path.join(dst_dir, fname))
+            return {"filename": fname, "subfolder": dst_rel, "type": "output"}
+
+        r = await _bg(work)
+        print(f"{LOG} 연속 생성 결과: {'복원' if d.get('op') == 'restore' else '삭제(휴지통으로)'} {r['subfolder']}/{r['filename']}")
+        return web.json_response(r)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=400)
 

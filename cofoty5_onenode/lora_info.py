@@ -8,9 +8,11 @@ Sources, in priority order:
   preview  : <name>.preview.png|jpg|webp, <name>.png|jpg|webp, metadata "preview_url"
   base     : Civitai baseModel  >  ss_base_model_version / modelspec.architecture
 """
+import hashlib
 import json
 import os
 import re
+import shutil
 import sys as _sys
 import threading
 
@@ -146,8 +148,10 @@ def describe(path):
     title = _find_key(info, ("model_name",))
     if not isinstance(title, str) and isinstance(info.get("model"), dict):
         title = info["model"].get("name")
+    tags = _find_key(info, ("tags",))   # Civitai 모델 태그 (style · artist · character …)
+    tags = [str(t).strip().lower() for t in (tags if isinstance(tags, list) else []) if isinstance(t, (str, int))][:30]
     return {"keywords": words, "guess": guess, "preview": preview, "kind": kind, "base": base,
-            "title": title if isinstance(title, str) else "", "desc": desc}
+            "title": title if isinstance(title, str) else "", "desc": desc, "tags": tags}
 
 
 LORA_CORE_VERSION = "2.1.0"
@@ -314,7 +318,7 @@ class LoraLibrary:
         by_file = {os.path.basename(k.replace("\\", "/")).lower(): v for k, v in user.items() if k not in names}
         out = []
         for name in names:
-            d = self._meta(name) or {"keywords": [], "guess": False, "preview": "", "kind": "", "base": "", "title": "", "desc": ""}
+            d = self._meta(name) or {"keywords": [], "guess": False, "preview": "", "kind": "", "base": "", "title": "", "desc": "", "tags": []}
             u = user.get(name) or by_file.get(os.path.basename(name.replace("\\", "/")).lower(), {})
             kws = u.get("keywords") if isinstance(u.get("keywords"), list) else d["keywords"]
             disp = os.path.splitext(os.path.basename(name))[0]
@@ -322,7 +326,7 @@ class LoraLibrary:
                         "keywords": kws, "guess": d["guess"] and "keywords" not in u, "user": "keywords" in u,
                         "has_preview": bool(d["preview"]), "kind": d.get("kind", ""), "base": d["base"],
                         "fam": lora_family(name, d["base"]),
-                        "title": d["title"], "desc": d.get("desc", "")})
+                        "title": d["title"], "desc": d.get("desc", ""), "tags": d.get("tags", [])})
         return out
 
     def preview_path(self, name):
@@ -378,12 +382,32 @@ class LoraLibrary:
             p = prs0.get(k)
             if isinstance(p, str) and p.strip():
                 prompts[k] = p
-        return {"sets": sets, "types": types, "prompts": prompts}
+        # ★ 고정 · 목록에서 숨김 (세트 편집 창)
+        stars = [k for k in (raw.get("stars") or []) if k in sets]
+        hidden = [k for k in (raw.get("hidden") or []) if k in sets]
+        return {"sets": sets, "types": types, "prompts": prompts, "stars": stars, "hidden": hidden}
 
     def _write(self, d):
         _save(self.sets_path, {"version": SCHEMA, "sets": d["sets"],
                                "types": {k: d["types"][k] for k in d["sets"] if d["types"].get(k) in SET_TYPES},
-                               "prompts": {k: d["prompts"][k] for k in d["sets"] if d["prompts"].get(k)}})
+                               "prompts": {k: d["prompts"][k] for k in d["sets"] if d["prompts"].get(k)},
+                               "stars": [k for k in d.get("stars", []) if k in d["sets"]],
+                               "hidden": [k for k in d.get("hidden", []) if k in d["sets"]]})
+
+    def flag_set(self, name, flag, on):
+        """세트에 ★ 고정(flag=stars) · 숨김(flag=hidden) 켜기/끄기"""
+        name = _clean_name(name)
+        if flag not in ("stars", "hidden"):
+            raise ValueError("알 수 없는 표시")
+        with FILE_LOCK:
+            d = self._read()
+            if name in d["sets"]:
+                cur = [k for k in d[flag] if k != name]
+                if on:
+                    cur.append(name)
+                d[flag] = cur
+                self._write(d)
+        return self.store()
 
     def store(self):
         """화면에 줄 전체: {sets, types, prompts, folder…}. 옮긴 LoRA는 지금 위치로."""
@@ -398,6 +422,8 @@ class LoraLibrary:
         except Exception:
             pass
         d.update(self.folder_info())
+        d["thumbs"] = self.thumbs(d["sets"].keys())
+        d["order"] = list(d["sets"].keys())  # 등록순 (파일에 적힌 순서)
         return d
 
     def put_set(self, name, loras, type_=None, prompt=None):
@@ -422,7 +448,113 @@ class LoraLibrary:
             for k in ("sets", "types", "prompts"):
                 d[k].pop(name, None)
             self._write(d)
+            shutil.rmtree(self.img_dir(name), ignore_errors=True)
         return self.store()
+
+    # ---------- 세트에 붙인 그림 (set_images/<이름>_<해시>/ : 원본 복사 + thumb.webp) ----------
+    def img_dir(self, name):
+        name = _clean_name(name)
+        safe = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", name).strip(" .") or "set"
+        return os.path.join(self.folder, "set_images", f"{safe[:30]}_{hashlib.sha1(name.encode('utf-8')).hexdigest()[:6]}")
+
+    THUMB_PX = 1024
+
+    def _make_thumb(self, d):
+        """폴더 안 첫 원본으로 thumb.webp (긴 변 1024px)"""
+        src = sorted(f for f in os.listdir(d) if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) and not f.startswith("thumb"))
+        if not src:
+            return None
+        from PIL import Image
+        out = os.path.join(d, "thumb.webp")
+        with Image.open(os.path.join(d, src[0])) as im:
+            im = im.convert("RGB")
+            im.thumbnail((self.THUMB_PX, self.THUMB_PX))
+            im.save(out, "WEBP", quality=86)
+        return out
+
+    def thumb_path(self, name):
+        d = self.img_dir(name)
+        p = os.path.join(d, "thumb.webp")
+        try:
+            if os.path.isfile(p):
+                from PIL import Image
+                with Image.open(p) as im:
+                    small = max(im.size) < 700  # 예전(400px) 미리보기 → 크게 다시
+                if not small:
+                    return p
+            if os.path.isdir(d):
+                return self._make_thumb(d)
+        except Exception as e:
+            print(f"[CoFoTy5] 세트 미리보기를 못 만들었습니다: {e}")
+            return p if os.path.isfile(p) else None
+        return None
+
+    def thumbs(self, names):
+        out = {}
+        for k in names:
+            p = os.path.join(self.img_dir(k), "thumb.webp")
+            try:
+                out[k] = int(os.path.getmtime(p))
+            except OSError:
+                pass
+        return out
+
+    def upload_image(self, name, raw):
+        """세트에 그림 한 장 올리기 (파일 · 붙여넣기). 맨 앞(00_)에 두어 그 그림이 미리보기가 됨. 예전에 올린 그림은 바꿈."""
+        import io
+        import time as _t
+        from PIL import Image
+        name = _clean_name(name)
+        with FILE_LOCK:
+            if name not in self._read()["sets"]:
+                raise ValueError(f"세트가 없습니다: {name}")
+        try:
+            with Image.open(io.BytesIO(raw)) as im:  # 그림이 맞는지 확인
+                im.load()
+                fmt = (im.format or "PNG").lower()
+        except Exception:
+            raise ValueError("그림 파일을 읽지 못했습니다 (PNG · JPG · WEBP를 넣어 주세요)")
+        ext = {"jpeg": ".jpg", "png": ".png", "webp": ".webp"}.get(fmt)
+        d = self.img_dir(name)
+        os.makedirs(d, exist_ok=True)
+        for f in os.listdir(d):
+            if f.startswith("00_upload"):
+                os.remove(os.path.join(d, f))
+        if ext:
+            with open(os.path.join(d, f"00_upload_{int(_t.time())}{ext}"), "wb") as f:
+                f.write(raw)
+        else:  # gif · bmp 등은 png로
+            with Image.open(io.BytesIO(raw)) as im:
+                im.convert("RGB").save(os.path.join(d, f"00_upload_{int(_t.time())}.png"))
+        if not os.path.isfile(os.path.join(d, "set.txt")):
+            with open(os.path.join(d, "set.txt"), "w", encoding="utf-8") as f:
+                f.write(name + "\n")
+        self._make_thumb(d)
+        return d
+
+    def attach_images(self, name, paths):
+        """세트에 그림을 붙임 (있던 그림은 바꿈). paths: 실제 파일 경로들. 첫 장으로 미리보기(thumb.webp)를 만듦."""
+        name = _clean_name(name)
+        if not name:
+            raise ValueError("세트 이름이 비었습니다")
+        paths = [p for p in paths if p and os.path.isfile(p)][:8]
+        if not paths:
+            raise ValueError("붙일 그림을 찾지 못했습니다")
+        d = self.img_dir(name)
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d, exist_ok=True)
+        kept = []
+        for i, p in enumerate(paths):
+            dst = os.path.join(d, f"{i + 1:02d}_" + os.path.basename(p))
+            shutil.copy2(p, dst)
+            kept.append(dst)
+        try:
+            self._make_thumb(d)
+        except Exception as e:
+            print(f"[CoFoTy5] 세트 미리보기를 못 만들었습니다: {e}")
+        with open(os.path.join(d, "set.txt"), "w", encoding="utf-8") as f:
+            f.write(name + "\n")
+        return {"name": name, "count": len(kept), "folder": d}
 
     def rename_set(self, old, new):
         old, new = _clean_name(old), _clean_name(new)
@@ -432,7 +564,14 @@ class LoraLibrary:
                 for k in ("sets", "types", "prompts"):
                     if old in d[k]:
                         d[k][new] = d[k].pop(old)
+                for k in ("stars", "hidden"):
+                    d[k] = [new if x == old else x for x in d[k]]
                 self._write(d)
+                if os.path.isdir(self.img_dir(old)):
+                    try:
+                        shutil.move(self.img_dir(old), self.img_dir(new))
+                    except OSError:
+                        pass
         return self.store()
 
     # ---------- 예전 방식 (전체를 한 번에 보내던 화면) — 보낸 것만 반영, 프롬프트·종류는 보존 ----------

@@ -49,7 +49,7 @@ const prevURL = (name) => url("/cofoty5_onenode/lora_preview?name=" + encodeURIC
 const HIDE = ["positive", "negative", "width", "height", "batch", "loras", "seed_value", "random_seed", "model", "steps", "cfg", "sampler",
   "scheduler", "text_encoder", "vae", "quality_on", "quality", "up_scale", "up_denoise", "up_sampler", "up_scheduler",
   "face_fix", "hand_fix", "face_denoise", "hand_denoise", "save_folder", "save_name", "date_folder", "extra", "action", "pick", "src",
-  "model_type", "ckpt", "clip_skip", "toggles", "auto", "lora_prompt"];
+  "model_type", "ckpt", "clip_skip", "toggles", "auto", "lora_prompt", "lora_prompt_on"];
 
 const NAME_RULES = ["날짜_번호", "날짜_시드", "번호만"];
 const SIZE3 = [1500, 1020], SIZE2 = [1110, 1160]; // 3단 · 2단 기본 노드 크기
@@ -120,10 +120,33 @@ async function saveFavs(items) {
 const safePlay = (m) => { try { const p = m?.play?.(); p?.catch?.(() => {}); } catch {} };
 const LIB = { items: null, byName: new Map(), loading: null };
 const PANELS = new Set();
-// 탭을 바꿨다 돌아오면 ComfyUI가 노드를 새로 만듦 → 미리보기 · 저장본 · 진행 상태를 여기 맡겨 두었다가 되살림
-// (파일 이름 목록만 기억 · 새로고침하거나 ComfyUI를 끄면 비워짐)
+// 탭을 바꿨다 돌아오면 ComfyUI가 노드를 새로 만듦 → 미리보기 · 저장본 · 진행 상태 · 프롬프트 기록을 여기 맡겨 두었다가 되살림
+// 크롬이 안 보는 탭을 잠재웠다가(메모리 절약) 다시 열면 페이지가 통째로 새로 읽힘 → 이 브라우저 탭의 sessionStorage 에도 적어 둠
+// (파일 이름 목록 · 기록만 · 탭을 닫으면 비워짐 · ComfyUI를 다시 켜면 임시 그림은 지워져 미리보기가 빈 칸일 수 있음)
 const MEM = new Map();
-const MEM_KEEP = ["prev", "saved", "pick", "view", "auto", "msg"];
+const MEM_KEEP = ["prev", "saved", "pick", "view", "auto", "msg", "lres"];
+const MEM_SS = "cofoty5_onenode.mem.v1";
+const memPack = (m) => ({ st: Object.fromEntries(MEM_KEEP.map((k) => [k, m.st?.[k]])), hist: m.hist });
+function memSave() {
+  try {
+    const o = {};
+    MEM.forEach((m, k) => { o[k] = m.packed ? m : memPack(m); });
+    let txt = JSON.stringify(o);
+    if (txt.length > 3_000_000) { Object.values(o).forEach((m) => { m.hist = null; }); txt = JSON.stringify(o); } // 너무 크면 프롬프트 기록은 뺌
+    sessionStorage.setItem(MEM_SS, txt);
+  } catch {}
+}
+(function memLoad() {
+  try {
+    const o = JSON.parse(sessionStorage.getItem(MEM_SS) || "{}");
+    // 새로 읽힌 페이지: 진행 중이던 목록 생성은 이어받지 못함 (대기열에 남은 것은 ComfyUI가 그대로 돌림)
+    Object.entries(o).forEach(([k, m]) => { if (m?.st) { m.st.auto = null; MEM.set(k, { ...m, packed: true }); } });
+  } catch {}
+})();
+let memT = 0;
+const memSoon = () => { clearTimeout(memT); memT = setTimeout(memSave, 800); };
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") memSave(); });
+window.addEventListener("pagehide", memSave);
 const wfKey = () => { try { const w = app.extensionManager?.workflow?.activeWorkflow; return w?.key || w?.path || ""; } catch { return ""; } };
 async function loadLibrary(force) {
   if (LIB.items && !force) return LIB.items;
@@ -303,7 +326,7 @@ app.registerExtension({
       // ---------------- 작은 부품 ----------------
       const label = (t, tip, w) => { const e = h("span", { color: C.dim, fontSize: "11px", whiteSpace: "nowrap", flexShrink: "0", ...(w ? { width: w } : {}) }, t); if (tip) e.title = tip; return e; };
       const row = (...kids) => { const e = h("div", { display: "flex", alignItems: "center", gap: "6px", minWidth: "0" }); e.append(...kids); return e; };
-      const btn = (t, fn, extra = {}, tip) => { const b = h("span", { ...CHIP, ...extra }, t); b.onclick = (e) => { e.stopPropagation(); fn(e); }; if (tip) b.title = tip; return b; };
+      const btn = (t, fn, extra = {}, tip) => { const b = h("span", { ...CHIP, ...extra }, t); b.onclick = (e) => { e.stopPropagation(); return fn(e); }; if (tip) b.title = tip; return b; };
       function textArea(name, rows, ph) {
         const t = h("textarea", { ...INPUT, width: "100%", resize: "vertical", fontFamily: "inherit", lineHeight: "1.4", flexShrink: "0" });
         t.rows = rows; t.placeholder = ph || ""; noKeys(t);
@@ -663,9 +686,16 @@ app.registerExtension({
       // 세트 줄: 공통 부품 (세트 = LoRA 목록 + 종류 + 로라 프롬프트, 저장 위치 바꾸기, 지금 모델용만)
       const sets = setBar({ store: loraStore("/cofoty5_onenode"), toast, getL, setL, getFam: () => curFam(),
         getP: () => val("lora_prompt") || "", setP: (v) => setVal("lora_prompt", v),
+        // 작가 태그 칸 왼쪽: 켜기/끄기 체크 + ✕ 지우기 (LoRA 줄과 같은 방식)
+        promptOn: { get: () => val("lora_prompt_on") !== false, set: (v) => setVal("lora_prompt_on", !!v) },
+        // 세트를 저장할 때 지금 보고 있는 그림(고른 미리보기 · 저장본)을 썸네일로 같이 저장
+        thumbFiles: () => {
+          const sv = st.view?.kind === "saved" ? st.saved?.[st.view.i] : null, f = sv || st.prev?.[st.pick];
+          return f ? [{ filename: f.filename, subfolder: f.subfolder || "", type: f.type || "temp" }] : [];
+        },
         theme: { text: C.text, dim: C.dim, bg: C.bg, line: C.line, accent: C.accent, accent2: C.accent2, gold: C.gold, warn: C.warn } });
       const renderSets = () => sets.render();
-      loraTitle.append(loraCount, h("span", { flex: "1" }), ...sets.head);
+      loraTitle.append(sets.name, loraCount, h("span", { flex: "1" }), ...sets.head);
       const loraCard = card("LoRA", loraTitle);
             const list = h("div", { display: "flex", flexDirection: "column", gap: "3px", minHeight: "30px" });
       const addBtn = h("div", { ...CHIP, borderStyle: "dashed", padding: "4px", borderRadius: "6px", color: C.accent2 }, "+ LoRA 추가");
@@ -865,7 +895,10 @@ app.registerExtension({
       const startB = h("button", { ...INPUT, flex: "1", padding: "6px 4px", fontSize: "12px", fontWeight: "700", cursor: "pointer", border: "0", background: C.accent, color: "#fff" }, "▶ 목록 생성 시작");
       const stopB = h("button", { ...INPUT, padding: "6px 10px", fontSize: "12px", fontWeight: "700", cursor: "pointer", border: "0", background: "#6b2d2d", color: "#fff", display: "none" }, "■ 그만");
       const prog = h("div", { color: C.dim, fontSize: "11px", minHeight: "14px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
-      s4.append(row(fileSel, reB, dirB), row(search, selAll, selNone), cnt, itemBox, label("진행 방식"), modeRow, modeTip, nextLb, row(startB, stopB), prog);
+      const resB = h("button", { ...INPUT, padding: "6px 10px", fontSize: "12px", fontWeight: "700", cursor: "pointer", background: "transparent", border: `1px solid ${C.gold}`, color: C.gold, display: "none" }, "결과");
+      resB.title = "마지막 목록 생성 결과를 모아 봅니다 (검수 · 재생성 체크 · 삭제)";
+      resB.onclick = () => st.lres && openListResult();
+      s4.append(row(fileSel, reB, dirB), row(search, selAll, selNone), cnt, itemBox, label("진행 방식"), modeRow, modeTip, nextLb, row(startB, stopB, resB), prog);
       css(cnt, { marginLeft: "0" });
       left.append(s4);
 
@@ -932,7 +965,7 @@ app.registerExtension({
         });
         paintAuto();
       }
-      const autoItem = (a) => { const it = a.items[a.i]; return JSON.stringify({ tags: it.tags, label: it.label, mode: a.mode, i: a.i, n: a.n }); };
+      const autoItem = (a) => { const it = a.items[a.i]; return JSON.stringify({ tags: it.tags, label: it.label, mode: a.mode, i: a.i, n: a.n, key: it.key }); };
       async function queueMe() {
         try { await app.queuePrompt(0, 1, { queueNodeIds: [node.id] }); }
         catch { await app.queuePrompt(0, 1); }
@@ -945,6 +978,11 @@ app.registerExtension({
         if (mode !== "watch" && n * b >= 40 && !confirm(`${n}개 항목 × 배치 ${b}장 = ${n * b}장을 만들어 저장합니다.\n시간이 오래 걸릴 수 있습니다. 계속할까요?`)) return;
         st.auto = { mode, items, n, i: 0, done: 0, saved: 0, err: 0, queued: 0, wait: "" };
         if (mode === "watch") { autoGen(); return; }
+        // 결과 창용 기록: 항목마다 저장된 그림 · 프롬프트 (재생성 체크를 모두 풀면 이 선택으로 되돌림)
+        st.lresPaint?.close?.();
+        st.lres = { at: new Date().toLocaleString(), mode, b, base: [...P.auto_sel], file: P.auto_file || "",
+          items: items.map((it, k) => ({ i: k, key: it.key, label: it.label, tags: it.tags, files: [], prompt: "", neg: "", loras: [], st: "wait" })) };
+        memSoon();
         paintAuto();
         for (let i = 0; i < n; i++) {
           const a = st.auto; if (!a) break;
@@ -977,6 +1015,7 @@ app.registerExtension({
           status.style.color = a.err ? C.warn : C.text; status.textContent = m; prog.textContent = m;
         }
         paintAuto(); show();
+        if (a && a.mode !== "watch" && st.lres?.items.some((x) => x.files.length || x.st === "err")) openListResult();
       }
       async function stopAuto() {
         const a = st.auto; st.auto = null;
@@ -999,6 +1038,12 @@ app.registerExtension({
         const a = st.auto; if (!a) return;
         if (out?.cofoty5_auto?.length && a.mode !== "watch") {
           a.done++; a.saved += out.cofoty5_auto[0].count || 0;
+          const R = out.cofoty5_auto[0], it = st.lres?.items[R.i];
+          if (it) {
+            it.files = (out.cofoty5_saved || []).map((f) => ({ filename: f.filename, subfolder: f.subfolder || "", type: f.type || "output", seed: f.seed, retry: false, del: false }));
+            it.prompt = R.prompt || ""; it.neg = R.neg || ""; it.loras = R.loras || []; it.st = "ok";
+            memSoon(); st.lresPaint?.();
+          }
           if (a.done >= a.n) return autoFinish();
         } else if (a.mode === "watch") {
           if (out?.cofoty5_error) a.wait = a.wait === "gen" ? "err" : "pick";
@@ -1010,6 +1055,9 @@ app.registerExtension({
           }
         } else if (out?.cofoty5_error) {
           a.done++; a.err++;
+          // 대기열 순서대로 도니까 아직 결과가 없는 첫 항목이 오류 난 항목 → 자동으로 재생성 체크
+          const it = st.lres?.items.find((x) => x.st === "wait");
+          if (it) { it.st = "err"; it.errRetry = true; lresSync(); st.lresPaint?.(); }
           if (a.done >= a.n) return autoFinish();
         }
         paintAuto();
@@ -1031,6 +1079,8 @@ app.registerExtension({
         startB.style.opacity = startB.disabled ? ".45" : "1";
         startB.textContent = P.auto_mode === "watch" ? `▶ 보면서 진행 시작 (${nSel}개)` : `▶ 목록 생성 시작 (${nSel}개 × ${b}장)`;
         stopB.style.display = a ? "" : "none";
+        resB.style.display = !a && st.lres?.items.some((x) => x.files.length || x.st === "err") ? "" : "none";
+        if (st.lres) { const nr = lresRetryKeys().length; resB.textContent = nr ? `결과 (재생성 ${nr})` : "결과"; }
         const cur = a ? a.items[Math.min(a.i, a.n - 1)] : null;
         if (a) {
           prog.style.color = C.text;
@@ -1060,6 +1110,157 @@ app.registerExtension({
           x.style.display = watch ? "" : "none"; x.disabled = off; x.style.opacity = off ? ".45" : "1";
         });
         aNext.parentElement.style.display = watch ? "flex" : "none";
+      }
+      // ================= 목록 생성 결과 창 (검수 · 재생성 체크 · 삭제/복원) =================
+      // 재생성 체크한 그림의 항목만 ④ 목록에 체크 → 다시 [▶ 목록 생성 시작]을 누르면 그 항목만 다시 만듦
+      function lresRetryKeys() {
+        const L = st.lres; if (!L) return [];
+        return [...new Set(L.items.filter((it) => it.errRetry || it.files.some((f) => f.retry)).map((it) => it.key))];
+      }
+      function lresSync() {
+        const L = st.lres; if (!L) return;
+        const keys = lresRetryKeys();
+        P.auto_sel = keys.length ? keys : [...L.base];
+        if (P.auto_file !== L.file && L.file && IT.files.includes(L.file)) { P.auto_file = L.file; fileSel.value = L.file; loadRows(); }
+        else renderList();
+        memSoon();
+      }
+      function openListResult() {
+        const L = st.lres; if (!L) return;
+        st.lresPaint?.close?.();
+        hideFloat();
+        const ov = h("div", { position: "fixed", inset: "0", background: "rgba(0,0,0,.78)", zIndex: "10000", display: "flex", alignItems: "center", justifyContent: "center" });
+        const box = h("div", { background: C.box, color: C.text, border: `1px solid ${C.gold}`, borderRadius: "10px", width: "97vw", height: "95vh", position: "relative",
+          display: "flex", flexDirection: "column", fontFamily: "sans-serif", fontSize: "12px", boxShadow: "0 10px 40px rgba(0,0,0,.7)", overflow: "hidden" });
+        const top = h("div", { display: "flex", alignItems: "center", gap: "8px", padding: "8px 14px", borderBottom: `1px solid ${C.line}`, flexWrap: "wrap", flexShrink: "0" });
+        const SZ = [["작게", 180], ["보통", 300], ["크게", 560]];
+        if (!(P.lres_px >= 0 && P.lres_px < SZ.length)) P.lres_px = 1;
+        const szWrap = h("span", { display: "inline-flex", border: `1px solid ${C.line}`, borderRadius: "6px", overflow: "hidden" });
+        const szBs = SZ.map(([t], k) => { const b = h("span", { padding: "2px 12px", cursor: "pointer", fontSize: "12px" }, t); b.onclick = () => { P.lres_px = k; layout(); }; szWrap.append(b); return b; });
+        const info = h("span", { color: C.dim });
+        const retryInfo = h("span", { fontWeight: "700", color: C.warn });
+        const clearB = btn("재생성 체크 모두 풀기", () => { L.items.forEach((it) => { it.errRetry = false; it.files.forEach((f) => (f.retry = false)); }); lresSync(); paintAll(); }, { fontSize: "11px" }, "재생성 체크를 모두 풀고 ④ 목록 체크를 처음 선택으로 되돌립니다");
+        const close = btn("✕ 닫기", () => done(), { marginLeft: "auto", fontSize: "12px", padding: "2px 12px" });
+        top.append(h("b", { fontSize: "14px", color: C.gold }, "목록 생성 결과"), info, h("span", { color: C.dim, marginLeft: "8px" }, "그림 크기"), szWrap, retryInfo, clearB, close);
+        const hint = h("div", { color: C.dim, fontSize: "11px", padding: "5px 14px", borderBottom: `1px solid ${C.line}`, flexShrink: "0" },
+          "그림을 누르거나 [재생성]을 누르면 재생성 대기로 체크되고, ④ 목록에 그 항목만 체크됩니다. 창을 닫고 [▶ 목록 생성 시작]을 누르면 체크한 항목만 다시 만듭니다. [삭제]는 저장된 그림을 휴지통(output/_onenode_trash)으로 옮기고, 한 번 더 누르면 복원합니다.");
+        const body = h("div", { flex: "1", overflowY: "auto", padding: "12px", display: "grid", gap: "12px", alignContent: "start", gridAutoRows: "max-content" });
+        ["wheel", "keydown", "keyup", "pointerdown"].forEach((t) => box.addEventListener(t, (e) => e.stopPropagation(), { passive: t === "wheel" }));
+        box.append(top, hint, body); ov.append(box);
+        const urlOf = (f) => api.apiURL(`/view?filename=${encodeURIComponent(f.filename)}&subfolder=${encodeURIComponent(f.subfolder || "")}&type=${f.type || "output"}`);
+        const SB = { fontSize: "11px", padding: "2px 8px", flexShrink: "0" };
+        // 프롬프트 팝업
+        let popup = null;
+        function showPrompt(it, f) {
+          const pv = h("div", { position: "absolute", inset: "0", background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: "3" });
+          const pb = h("div", { background: C.box, border: `1px solid ${C.line}`, borderRadius: "8px", width: "min(760px, 90%)", maxHeight: "80%", display: "flex", flexDirection: "column", boxShadow: "0 8px 30px rgba(0,0,0,.5)" });
+          const ph = h("div", { display: "flex", alignItems: "center", gap: "8px", padding: "8px 12px", borderBottom: `1px solid ${C.line}` });
+          const txt = it.prompt + (it.loras?.length ? "\n\nLoRA: " + it.loras.join(", ") : "") + (it.neg ? "\n\nNegative: " + it.neg : "") + (f?.seed != null ? "\n\nSeed: " + f.seed : "");
+          const copyB = btn("📋 복사", async () => { try { await navigator.clipboard.writeText(it.prompt); toast("프롬프트를 복사했습니다", "success", 1500); } catch { toast("복사하지 못했습니다", "warn"); } }, SB, "프롬프트(긍정)만 복사");
+          ph.append(h("b", {}, `${it.label}${f ? " · " + f.filename : ""}`), h("span", { flex: "1" }), copyB, btn("✕", () => pv.remove(), SB));
+          const pre = h("div", { padding: "10px 14px", overflowY: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: "1.55", fontSize: "12px", userSelect: "text" }, txt || "(프롬프트 기록 없음)");
+          pb.append(ph, pre); pv.append(pb);
+          pv.addEventListener("mousedown", (e) => { if (e.target === pv) pv.remove(); });
+          popup?.remove(); popup = pv;
+          box.append(pv);
+        }
+        async function toggleDel(f, refresh) {
+          const restore = f.del;
+          if (f._busy) return; f._busy = true;
+          try {
+            const r = await api.fetchApi("/cofoty5_onenode/trash", { method: "POST", body: JSON.stringify({ op: restore ? "restore" : "delete", filename: f.filename, subfolder: f.subfolder }) });
+            const j = await r.json();
+            if (j.error) throw new Error(j.error);
+            f.filename = j.filename; f.subfolder = j.subfolder; f.del = !restore;
+            memSoon();
+          } catch (e) { toast((restore ? "복원" : "삭제") + "하지 못했습니다: " + (e?.message || e), "warn", 4000); }
+          f._busy = false; refresh();
+        }
+        // 그림 카드 (수백 장이어도 그림은 화면에 보일 때만 읽음)
+        const cards = [];
+        function makeCard(it, f, k) {
+          const c = h("div", { border: `2px solid ${C.line}`, borderRadius: "8px", background: C.bg, overflow: "hidden", display: "flex", flexDirection: "column", position: "relative" });
+          const imW = h("div", { position: "relative", cursor: "pointer", background: "#111", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: "0" });
+          const im = h("img", { width: "100%", height: "100%", objectFit: "contain", display: "block" });
+          im.loading = "lazy"; im.decoding = "async"; im.draggable = false;
+          const tag = h("div", { position: "absolute", left: "6px", top: "6px", background: C.warn, color: "#111", fontWeight: "800", fontSize: "11px", padding: "1px 7px", borderRadius: "4px", display: "none" }, "재생성 대기");
+          const delTag = h("div", { position: "absolute", right: "6px", top: "6px", background: "#6b2d2d", color: "#fff", fontWeight: "700", fontSize: "11px", padding: "1px 7px", borderRadius: "4px", display: "none" }, "삭제됨");
+          imW.append(im, tag, delTag);
+          imW.title = "눌러서 재생성 체크 / 풀기";
+          imW.onclick = () => { f.retry = !f.retry; lresSync(); paintCard(); paintTop(); };
+          const nm = h("div", { padding: "4px 6px 0", fontSize: "11px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" });
+          const bar = h("div", { display: "flex", gap: "4px", padding: "4px 6px 6px", flexWrap: "wrap" });
+          const pB = btn("프롬프트", () => showPrompt(it, f), SB, "이 그림을 만든 프롬프트 보기");
+          const dB = btn("삭제", () => toggleDel(f, paintCard), SB);
+          const rB = btn("재생성", () => { f.retry = !f.retry; lresSync(); paintCard(); paintTop(); }, SB);
+          bar.append(pB, dB, rB);
+          c.append(imW, nm, bar);
+          let src = "";
+          function paintCard() {
+            const px = SZ[P.lres_px][1];
+            imW.style.height = Math.round(px * 1.25) + "px";
+            const u = urlOf(f); if (u !== src) { src = u; im.src = u; }
+            nm.textContent = `${it.label} · ${f.filename}`; nm.title = `${it.label}\n${f.subfolder ? f.subfolder + "/" : ""}${f.filename}`;
+            c.style.borderColor = f.retry ? C.warn : C.line;
+            tag.style.display = f.retry ? "" : "none";
+            delTag.style.display = f.del ? "" : "none";
+            im.style.opacity = f.del ? ".3" : "1"; nm.style.opacity = f.del ? ".5" : "1";
+            dB.textContent = f.del ? "↶ 복원" : "삭제";
+            dB.title = f.del ? "휴지통에서 원래 자리로 되돌립니다" : "저장된 그림을 바로 휴지통(output/_onenode_trash)으로 옮깁니다";
+            css(rB, f.retry ? { background: C.warn, borderColor: C.warn, color: "#111", fontWeight: "700" } : { background: "", borderColor: "", color: "", fontWeight: "" });
+            rB.textContent = f.retry ? "✔ 재생성 대기" : "재생성";
+            rB.title = f.retry ? "재생성 체크 풀기" : "이 그림의 항목을 다시 만들도록 ④ 목록에 체크";
+          }
+          c._paint = paintCard; cards.push(c);
+          return c;
+        }
+        function makeErrCard(it) {
+          const c = h("div", { border: `2px solid ${C.bad}`, borderRadius: "8px", background: C.bg, display: "flex", flexDirection: "column", gap: "6px", padding: "10px", justifyContent: "center" });
+          const cb = btn("", () => { it.errRetry = !it.errRetry; lresSync(); paint1(); paintTop(); }, SB);
+          const paint1 = () => { c.style.height = Math.round(SZ[P.lres_px][1] * 1.25) + "px"; cb.textContent = it.errRetry ? "✔ 재생성 대기" : "재생성"; css(cb, it.errRetry ? { background: C.warn, borderColor: C.warn, color: "#111", fontWeight: "700" } : { background: "", borderColor: "", color: "", fontWeight: "" }); };
+          c.append(h("b", { color: C.bad }, "⚠ 오류로 못 만듦"), h("span", {}, it.label), h("span", { color: C.dim, fontSize: "11px" }, it.tags), cb);
+          c._paint = paint1; cards.push(c); return c;
+        }
+        let built = 0;
+        function build() {
+          body.innerHTML = ""; cards.length = 0;
+          L.items.forEach((it) => {
+            if (it.st === "err" && !it.files.length) body.append(makeErrCard(it));
+            it.files.forEach((f, k) => body.append(makeCard(it, f, k)));
+          });
+          built = L.items.reduce((n, it) => n + it.files.length + (it.st === "err" ? 1 : 0), 0);
+          if (!cards.length) body.append(h("div", { color: C.dim, padding: "20px" }, "아직 결과가 없습니다."));
+          layout();
+        }
+        function layout() {
+          const px = SZ[P.lres_px][1];
+          body.style.gridTemplateColumns = `repeat(auto-fill, minmax(${px}px, 1fr))`;
+          szBs.forEach((b, k) => css(b, k === P.lres_px ? { background: C.accent, color: "#fff" } : { background: "transparent", color: C.text }));
+          cards.forEach((c) => c._paint());
+        }
+        function paintTop() {
+          const nf = L.items.reduce((n, it) => n + it.files.length, 0), nd = L.items.reduce((n, it) => n + it.files.filter((f) => f.del).length, 0);
+          const nw = L.items.filter((it) => it.st === "wait").length, ne = L.items.filter((it) => it.st === "err").length;
+          info.textContent = `${L.at} · ${L.n ?? L.items.length}개 항목 × ${L.b}장 · ${nf}장${nd ? ` (삭제 ${nd})` : ""}${ne ? ` · ⚠ 오류 ${ne}` : ""}${nw && st.auto ? ` · 진행 중 (남은 ${nw})` : ""}`;
+          const keys = lresRetryKeys();
+          retryInfo.textContent = keys.length ? `재생성 대기: 항목 ${keys.length}개 → ④ 목록에 체크됨` : "";
+          clearB.style.display = keys.length ? "" : "none";
+          paintAuto();
+        }
+        function paintAll() { cards.forEach((c) => c._paint()); paintTop(); }
+        const repaint = () => {
+          const n = L.items.reduce((m, it) => m + it.files.length + (it.st === "err" ? 1 : 0), 0);
+          if (n !== built) build(); else paintAll();
+          paintTop();
+        };
+        const keyH = (e) => { if (e.key === "Escape") { e.stopPropagation(); if (popup?.isConnected) { popup.remove(); popup = null; } else done(); } };
+        window.addEventListener("keydown", keyH, true);
+        function done() { window.removeEventListener("keydown", keyH, true); if (st.lresPaint === repaint) st.lresPaint = null; ov.remove(); paintAuto(); }
+        repaint.close = done;
+        st.lresPaint = repaint;
+        ov.addEventListener("mousedown", (e) => { if (e.target === ov) done(); });
+        build(); paintTop();
+        document.body.append(ov);
       }
       function openHelp() {
         const ov = h("div", { position: "fixed", inset: "0", background: "rgba(0,0,0,.55)", zIndex: "10000", display: "flex", alignItems: "center", justifyContent: "center" });
@@ -1103,6 +1304,8 @@ app.registerExtension({
 <li>⚡ 방식은 항목마다 ComfyUI 대기열에 한 번씩 들어갑니다. 자리를 비워도 끝까지 돕니다. 중간에 멈추려면 ④의 <b>■ 그만</b> (남은 대기열을 지움). 보면서 진행도 ④의 <b>■ 그만</b>으로 언제든 끝낼 수 있습니다.</li>
 <li>시드를 <b>고정</b>으로 두면 모든 항목이 같은 시드로 만들어져 표정 · 포즈만 비교하기 좋습니다. <b>랜덤</b>이면 항목마다 다른 그림.</li>
 <li>파일 내용을 고쳤다면 <b>↻</b>를 눌러야 반영됩니다. 체크는 이름이 같으면 유지됩니다.</li>
+<li><b>결과 창 (⚡ 방식)</b> — 다 만들면 <b>목록 생성 결과</b> 창이 열립니다 (나중에 <b>[결과]</b> 버튼으로 다시 열기). 그림을 누르거나 <b>[재생성]</b>을 누르면 <b>재생성 대기</b>가 되고 ④ 목록에 그 항목만 체크됩니다. 창을 닫고 <b>▶ 목록 생성 시작</b>을 누르면 체크한 항목만 다시 만듭니다. 재생성 체크를 모두 풀면 목록 체크는 처음 선택으로 돌아갑니다.<br>
+ <b>[프롬프트]</b>는 그 그림을 만든 프롬프트 · LoRA · 시드, <b>[삭제]</b>는 저장된 그림을 <code>output/_onenode_trash</code>로 옮기고(흐리게 표시) 한 번 더 누르면 원래 자리로 복원합니다. 오류로 못 만든 항목은 자동으로 재생성 대기가 됩니다.</li>
 </ul>`,
           sheet: `
 <p>파일은 <code>ComfyUI/input/onenode</code> 폴더에 넣습니다. 읽는 형식: <b>엑셀(.xlsx) · CSV · TSV · 메모장(.txt)</b></p>
@@ -1666,6 +1869,7 @@ blush, embarrassed
         });
         sync();
         autoResult(out);
+        memSoon();
       };
 
       applyLayout();
@@ -1684,12 +1888,13 @@ blush, embarrassed
         const key = wfKey() + "#" + uid;
         const m = MEM.get(key);
         if (m && m.st !== st) {
-          MEM_KEEP.forEach((k) => { if (m.st[k] !== undefined) st[k] = m.st[k]; });
-          hist.list = m.hist.list; hist.i = m.hist.i;
+          MEM_KEEP.forEach((k) => { if (m.st[k] !== undefined && m.st[k] !== null) st[k] = m.st[k]; });
+          if (m.hist?.list) { hist.list = m.hist.list; hist.i = m.hist.i; }
           show(); paintAuto(); paintHist?.();
           if (st.msg) { status.style.color = st.msg.warn ? C.warn : C.text; status.textContent = st.msg.text; status.title = st.msg.text; }
         }
         MEM.delete(key); MEM.set(key, { st, hist });
+        memSoon();
         while (MEM.size > 30) MEM.delete(MEM.keys().next().value); // 오래된 것부터 정리
       }
       setTimeout(() => { applyLayout(); sync(); bindMem(); }, 0);
