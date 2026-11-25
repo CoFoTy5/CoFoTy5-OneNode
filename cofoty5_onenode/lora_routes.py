@@ -1,7 +1,7 @@
 """LoRA 세트 · 저장 위치 서버 주소 (LoRA 공통 규격 v2)
 
   GET  {P}/lora_store          → {sets, types, prompts, folder, default, is_default, exists, version}
-  POST {P}/lora_store/set      → {op: "put", name, loras, type, prompt} / {op: "del", name} / {op: "rename", name, to}
+  POST {P}/lora_store/set      → {op: "put", name, loras, type, prompt, model} / {op: "del", name} / {op: "rename", name, to}
   POST {P}/lora_store/folder   → {folder: "경로" | ""(기본 위치로)}
   POST {P}/lora_store/pick     → PC에서 폴더 고르기 창 → {path}
   POST {P}/lora_store/images   → {name, files: [{filename, subfolder, type: output|temp}]} 세트에 그림 붙이기
@@ -43,7 +43,7 @@ def register(routes, prefix, library):
             elif op == "rename":
                 out = await bg(library.rename_set, d.get("name", ""), d.get("to", ""))
             else:
-                out = await bg(library.put_set, d.get("name", ""), d.get("loras", []), d.get("type"), d.get("prompt"))
+                out = await bg(library.put_set, d.get("name", ""), d.get("loras", []), d.get("type"), d.get("prompt"), d.get("model"))
             return web.json_response(out)
         except Exception as e:
             return err(e)

@@ -23,7 +23,8 @@ const INPUT = { background: C.bg, color: C.text, border: `1px solid ${C.line}`, 
 const CHIP = { border: `1px solid ${C.line}`, borderRadius: "10px", padding: "1px 7px", cursor: "pointer", background: C.bg,
   color: C.text, whiteSpace: "nowrap", userSelect: "none", fontSize: "11px", display: "inline-flex", alignItems: "center", justifyContent: "center" };
 const ON = { background: C.accent, borderColor: C.accent2, color: "#fff" };
-const toast = (msg, severity = "info", life = 4000) => { try { app.extensionManager?.toast?.add({ severity, summary: msg, life }); } catch {} };
+const toastMs = (s, l) => (l === "model" ? 6000 : ({ info: 2000, success: 2000, warn: 4000, error: 6000 }[s] ?? 2000)); // 알림 유지: 안내 2초 · 경고 4초 · 오류/모델 경고 6초
+const toast = (msg, severity = "info", life) => { try { app.extensionManager?.toast?.add({ severity, summary: msg, life: toastMs(severity, life) }); } catch {} };
 // ---------------------------------------------------------------- 가속 상태 (모든 OneNode가 같이 씀)
 const ACCEL = { data: null, paints: new Set() };
 const paintAllAccel = () => ACCEL.paints.forEach((f) => { try { f(); } catch {} });
@@ -685,6 +686,7 @@ app.registerExtension({
       const loraTitle = h("div", { display: "flex", alignItems: "center", gap: "3px", flex: "1", minWidth: "0" });
       // 세트 줄: 공통 부품 (세트 = LoRA 목록 + 종류 + 로라 프롬프트, 저장 위치 바꾸기, 지금 모델용만)
       const sets = setBar({ store: loraStore("/cofoty5_onenode"), toast, getL, setL, getFam: () => curFam(),
+        getModel: () => (curType() === "ckpt" ? val("ckpt") : val("model")) || "", // 세트에 '저장할 때 쓰던 모델' 같이 저장 · 고를 때 지금 모델과 다르면 알림
         getP: () => val("lora_prompt") || "", setP: (v) => setVal("lora_prompt", v),
         // 작가 태그 칸 왼쪽: 켜기/끄기 체크 + ✕ 지우기 (LoRA 줄과 같은 방식)
         promptOn: { get: () => val("lora_prompt_on") !== false, set: (v) => setVal("lora_prompt_on", !!v) },

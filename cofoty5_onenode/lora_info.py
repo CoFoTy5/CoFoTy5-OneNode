@@ -253,7 +253,7 @@ class LoraLibrary:
     """Metadata cache + user keyword overrides + saved LoRA sets.
 
     저장 폴더: cofoty5_store 참고 — 팩 폴더의 lora_store.json {"folder": "..."} 이 가리키는 곳 (없으면 이 ComfyUI의 user\\cofoty5).
-      lora_sets.json : {"version": 2, "sets": {이름: [LoRA…]}, "types": {이름: anima|xl|sd15}, "prompts": {이름: "로라 프롬프트"}}
+      lora_sets.json : {"version": 2, "sets": {이름: [LoRA…]}, "types": {이름: anima|xl|sd15}, "prompts": {이름: "로라 프롬프트"}, "models": {이름: "저장할 때 쓰던 모델 파일"}}
       lora_user.json : LoRA마다 직접 고친 키워드
     두 팩이 같은 폴더를 가리키면 세트·키워드를 같이 씀. 저장은 세트 하나 단위(파일을 다시 읽고 합쳐서 씀).
     """
@@ -375,22 +375,27 @@ class LoraLibrary:
                 sets[k] = _clean_loras(v)
         tys0 = raw.get("types") if isinstance(raw.get("types"), dict) else {}
         prs0 = raw.get("prompts") if isinstance(raw.get("prompts"), dict) else {}
-        types, prompts = {}, {}
+        mds0 = raw.get("models") if isinstance(raw.get("models"), dict) else {}
+        types, prompts, models = {}, {}, {}
         for k, v in sets.items():
             t = tys0.get(k)
             types[k] = self._guess_type(v, t if isinstance(t, str) else "")
             p = prs0.get(k)
             if isinstance(p, str) and p.strip():
                 prompts[k] = p
+            m = mds0.get(k)  # 세트를 저장할 때 쓰던 모델(체크포인트) 파일 이름
+            if isinstance(m, str) and m.strip():
+                models[k] = m.strip()[:300]
         # ★ 고정 · 목록에서 숨김 (세트 편집 창)
         stars = [k for k in (raw.get("stars") or []) if k in sets]
         hidden = [k for k in (raw.get("hidden") or []) if k in sets]
-        return {"sets": sets, "types": types, "prompts": prompts, "stars": stars, "hidden": hidden}
+        return {"sets": sets, "types": types, "prompts": prompts, "models": models, "stars": stars, "hidden": hidden}
 
     def _write(self, d):
         _save(self.sets_path, {"version": SCHEMA, "sets": d["sets"],
                                "types": {k: d["types"][k] for k in d["sets"] if d["types"].get(k) in SET_TYPES},
                                "prompts": {k: d["prompts"][k] for k in d["sets"] if d["prompts"].get(k)},
+                               "models": {k: d["models"][k] for k in d["sets"] if d.get("models", {}).get(k)},
                                "stars": [k for k in d.get("stars", []) if k in d["sets"]],
                                "hidden": [k for k in d.get("hidden", []) if k in d["sets"]]})
 
@@ -426,8 +431,8 @@ class LoraLibrary:
         d["order"] = list(d["sets"].keys())  # 등록순 (파일에 적힌 순서)
         return d
 
-    def put_set(self, name, loras, type_=None, prompt=None):
-        """세트 하나 저장/수정. prompt=None 이면 예전 프롬프트 유지, \"\" 이면 지움."""
+    def put_set(self, name, loras, type_=None, prompt=None, model=None):
+        """세트 하나 저장/수정. prompt=None 이면 예전 프롬프트 유지, \"\" 이면 지움. model 도 같은 규칙(저장할 때 쓰던 모델 이름)."""
         name = _clean_name(name)
         if not name:
             raise ValueError("세트 이름이 비었습니다")
@@ -438,6 +443,11 @@ class LoraLibrary:
             d["types"][name] = type_ if type_ in SET_TYPES else self._guess_type(L, d["types"].get(name, ""))
             if prompt is not None:
                 d["prompts"][name] = str(prompt)
+            if model is not None:
+                if str(model).strip():
+                    d["models"][name] = str(model).strip()[:300]
+                else:
+                    d["models"].pop(name, None)
             self._write(d)
         return self.store()
 
@@ -445,7 +455,7 @@ class LoraLibrary:
         name = _clean_name(name)
         with FILE_LOCK:
             d = self._read()
-            for k in ("sets", "types", "prompts"):
+            for k in ("sets", "types", "prompts", "models"):
                 d[k].pop(name, None)
             self._write(d)
             shutil.rmtree(self.img_dir(name), ignore_errors=True)
@@ -561,7 +571,7 @@ class LoraLibrary:
         with FILE_LOCK:
             d = self._read()
             if old in d["sets"] and new and new not in d["sets"]:
-                for k in ("sets", "types", "prompts"):
+                for k in ("sets", "types", "prompts", "models"):
                     if old in d[k]:
                         d[k][new] = d[k].pop(old)
                 for k in ("stars", "hidden"):
@@ -590,11 +600,13 @@ class LoraLibrary:
                 if k and isinstance(v, list):
                     new[k] = _clean_loras(v)
             tys = types if isinstance(types, dict) else {}
-            out = {"sets": new, "types": {}, "prompts": {}}
+            out = {"sets": new, "types": {}, "prompts": {}, "models": {}}
             for k, v in new.items():
                 t = tys.get(k)
                 out["types"][k] = self._guess_type(v, t) if t else (d["types"].get(k) or self._guess_type(v))
                 if d["prompts"].get(k):
                     out["prompts"][k] = d["prompts"][k]
+                if d["models"].get(k):
+                    out["models"][k] = d["models"][k]
             self._write(out)
         return self.get_sets()

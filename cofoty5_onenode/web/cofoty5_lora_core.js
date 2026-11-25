@@ -59,7 +59,7 @@ export function loraStore(prefix) {
       return j;
     },
     async load() { try { S._set(await (await api.fetchApi(P)).json()); } catch { S._set(null); } return S.data; },
-    async put(name, loras, type, prompt) { return S._set(await S._post("/set", { op: "put", name, loras, type, prompt })); },
+    async put(name, loras, type, prompt, model) { return S._set(await S._post("/set", { op: "put", name, loras, type, prompt, model })); },
     async del(name) { return S._set(await S._post("/set", { op: "del", name })); },
     async rename(name, to) { return S._set(await S._post("/set", { op: "rename", name, to })); },
     // 세트에 그림 올리기 (파일 · 붙여넣기) → 그 그림이 미리보기가 됨
@@ -81,6 +81,7 @@ export function loraStore(prefix) {
       return { mine: all.filter(ok), other: all.filter((k) => !ok(k)) };
     },
     type(k) { return S.data.types?.[k] || ""; },
+    model(k) { return S.data.models?.[k] || ""; }, // 세트를 저장할 때 쓰던 모델(체크포인트) 파일 이름
     prompt(k) { return S.data.prompts?.[k] || ""; },
     loras(k) { return (S.data.sets?.[k] || []).map((x) => ({ ...x })); },
     // 세트에 붙인 그림 (files: ComfyUI 그림 정보 {filename, subfolder, type})
@@ -99,6 +100,10 @@ export const setSig = (arr) => JSON.stringify((arr || []).map((x) => [x.name, +(
 
 // ---------- 세트 복사 · 붙여넣기 (팩 사이: 로라테스터 → 원노드 · 리암젠) ----------
 //  복사: 이 브라우저(localStorage, 세 팩이 같은 키) + 시스템 클립보드(글자)에 같이 적어 둠 → 다른 주소의 ComfyUI에서도 붙여넣기 가능
+// ---------- 세트에 저장한 모델 이름 ----------
+export const modelShort = (m) => String(m || "").split(/[\\/]/).pop().replace(/\.(safetensors|ckpt|pt|gguf|sft)$/i, "");
+export const sameModel = (a, b) => modelShort(a).toLowerCase() === modelShort(b).toLowerCase();
+
 //  붙여넣기: 세트 선택 창의 [📋 세트 붙여넣기] 버튼으로만 (Ctrl+V는 지금처럼 커서 아래 세트의 썸네일 넣기)
 const CLIP_KEY = "cofoty5_set_clip";
 const blobToURL = (b) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = no; r.readAsDataURL(b); });
@@ -106,7 +111,7 @@ export async function copySetToClip(store, s) {
   let thumb = null;
   if (s.thumb) { try { const r = await fetch(s.thumb); if (r.ok) thumb = await blobToURL(await r.blob()); } catch {} }
   const p = { cofoty5_set: 1, name: s.name || "", loras: (s.loras || []).map((x) => ({ name: x.name, strength: +x.strength, on: x.on !== false })),
-    type: s.type || "", prompt: s.prompt || "", thumb, at: Date.now() };
+    type: s.type || "", prompt: s.prompt || "", model: s.model || "", thumb, at: Date.now() };
   try { localStorage.setItem(CLIP_KEY, JSON.stringify(p)); }
   catch { try { localStorage.setItem(CLIP_KEY, JSON.stringify({ ...p, thumb: null })); p.noThumb = true; } catch {} }
   try { await navigator.clipboard?.writeText(JSON.stringify(p)); } catch {}
@@ -121,12 +126,12 @@ async function readSetClip() {
 async function pasteSetFromClip(store, say) {
   const c = await readSetClip();
   if (!c) { say("복사한 세트가 없습니다 — 로라테스터의 LoRA 칸에서 [세트 복사]를 먼저 누르세요", "warn"); return; }
-  const desc = `LoRA ${c.loras.length}개${c.prompt ? " · 작가 태그" : ""}${c.thumb ? " · 썸네일" : ""} (${FAM_NAME[c.type] || "모델 모름"}용)`;
+  const desc = `LoRA ${c.loras.length}개${c.prompt ? " · 작가 태그" : ""}${c.thumb ? " · 썸네일" : ""} (${FAM_NAME[c.type] || "모델 모름"}용${c.model ? " · 모델 " + modelShort(c.model) : ""})`;
   const n = (window.prompt(`복사한 세트를 이 노드의 세트로 저장합니다\n${desc}\n\n저장할 이름`, c.name || dateSetName(Object.keys(store.data.sets || {}))) || "").trim().slice(0, 40);
   if (!n) return;
   if (store.data.sets?.[n] && !confirm(`'${n}' 세트가 이미 있습니다. 복사한 세트로 덮어쓸까요?`)) return;
   try {
-    await store.put(n, c.loras, c.type, c.prompt);
+    await store.put(n, c.loras, c.type, c.prompt, c.model || "");
     if (c.thumb) store._set(await store._post("/upload", { name: n, data: c.thumb }));
     say(`세트 '${n}' 붙여넣기 완료 (${desc})`, "success");
   } catch (e) { say("세트를 붙여넣지 못했습니다: " + e.message, "error"); }
@@ -137,7 +142,7 @@ async function pasteSetFromClip(store, say) {
 export function splitTags(p) { return String(p || "").split(",").map((t) => t.trim()).filter(Boolean); }
 // 프롬프트 두 개를 합침 (같은 태그는 한 번만)
 export function mergeTags(...ps) { const seen = new Set(), out = []; ps.forEach((p) => splitTags(p).forEach((t) => { const k = t.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(t); } })); return out.join(", "); }
-export function openSetManager(store, { toast, theme, getFam, apply, current, kindOf } = {}) {
+export function openSetManager(store, { toast, theme, getFam, apply, current, kindOf, curModel } = {}) {
   const T = { text: "#e6e6e6", dim: "#9a9aa4", bg: "#1b1b1f", line: "#3a3a42", accent: "#2c8a8a", accent2: "#45b0b0", gold: "#e8c46a", warn: "#e0a040", ...(theme || {}) };
   const h = (tag, s = {}, t) => { const e = document.createElement(tag); Object.assign(e.style, s); if (t != null) e.textContent = t; return e; };
   const say = (m, s = "info") => { if (toast) toast(m, s); };
@@ -211,6 +216,16 @@ export function openSetManager(store, { toast, theme, getFam, apply, current, ki
     tinfo.append(hd);
     const flags = [store.isStar(k) ? "★ 고정" : "", store.isHidden(k) ? "🙈 숨김" : "", other ? "다른 모델용 (지금 모델에서는 못 씀)" : "", k === current?.() ? "● 지금 쓰는 세트" : ""].filter(Boolean);
     if (flags.length) tinfo.append(h("div", { color: T.dim, fontSize: "11px" }, flags.join(" · ")));
+    // 저장할 때 쓰던 모델 (지금 모델과 다르면 주황)
+    const md = store.model(k);
+    if (md) {
+      const diff = curModel && curModel() && !sameModel(md, curModel());
+      const mr = h("div", { display: "flex", alignItems: "center", gap: "5px", padding: "2px 6px", borderRadius: "5px", border: `1px solid ${diff ? T.warn : T.line}`, background: "rgba(127,127,127,.08)" });
+      mr.append(h("span", { fontSize: "10px", fontWeight: "700", color: diff ? T.warn : T.dim, border: `1px solid ${diff ? T.warn : T.dim}`, borderRadius: "4px", padding: "0 3px", flexShrink: "0" }, "모델"),
+        h("span", { flex: "1", minWidth: "0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: diff ? T.warn : "" }, modelShort(md) + (diff ? "  (지금 모델과 다름)" : "")));
+      mr.title = md + (diff ? `\n지금 모델: ${curModel()}` : "");
+      tinfo.append(mr);
+    }
     const line = (badge, col, text, val, dim) => {
       const r = h("div", { display: "flex", alignItems: "center", gap: "5px", padding: "2px 6px", borderRadius: "5px", border: `1px solid ${T.line}`, background: "rgba(127,127,127,.08)", opacity: dim ? ".45" : "1" });
       r.append(h("span", { fontSize: "10px", fontWeight: "700", color: col, border: `1px solid ${col}`, borderRadius: "4px", padding: "0 3px", flexShrink: "0" }, badge),
@@ -402,13 +417,19 @@ export function setBar(opts) {
   const chip = (t, title, fn) => { const b = h("span", { border: `1px solid ${T.line}`, borderRadius: "8px", padding: "0 6px", cursor: "pointer", userSelect: "none",
     fontSize: "11px", display: "inline-flex", alignItems: "center", lineHeight: "17px", background: T.bg, color: T.text, flexShrink: "0" }, t);
     b.title = title; b.onclick = (e) => { e.stopPropagation(); fn(e); }; return b; };
-  const say = (m, s) => { if (toast) toast(m, s); };
+  const say = (m, s, life) => { if (toast) toast(m, s, life); };
   const st = { saving: false };
   const fam = () => getFam() || "";
   const curName = h("span", { fontSize: "11px", fontWeight: "600", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: "0", flex: "0 1 auto", maxWidth: "170px",
     color: T.dim, border: `1px solid ${T.line}`, borderRadius: "5px", padding: "1px 8px", background: T.bg, lineHeight: "16px", marginLeft: "4px" });
   const pickB = chip("세트 선택", "저장한 LoRA 세트를 썸네일로 보고 골라 넣습니다 (★ 고정 · 숨김 · 이름 변경 · 삭제도 여기서)", () =>
-    openSetManager(store, { toast, theme: T, getFam: fam, current, kindOf: opts.kindOf, apply: (k) => { setL(store.loras(k)); if (setP) setP(store.prompt(k)); opts.onApply?.(k); render(); } }));
+    openSetManager(store, { toast, theme: T, getFam: fam, current, kindOf: opts.kindOf, curModel: opts.getModel,
+      apply: (k) => {
+        setL(store.loras(k)); if (setP) setP(store.prompt(k)); opts.onApply?.(k); render();
+        // 세트를 저장할 때 쓰던 모델과 지금 모델이 다르면 한 번 알림 (그림체가 많이 달라질 수 있음)
+        const m = store.model(k), now = opts.getModel?.() || "";
+        if (m && now && !sameModel(m, now)) setTimeout(() => say(`⚠ 세트 '${k}'는 모델 '${modelShort(m)}'로 만든 세트입니다. 지금 모델은 '${modelShort(now)}'라 결과가 다르게 나올 수 있습니다.`, "warn", "model"), 50);
+      } }));
   Object.assign(pickB.style, { background: T.accent, borderColor: T.accent2, color: "#fff" });
   const saveB = chip("저장", "지금 LoRA 조합(과 로라 프롬프트)을 세트로 저장", () => { st.saving = !st.saving; render(); });
   const saveRow = h("div", { display: "none", alignItems: "center", gap: "3px" });
@@ -456,7 +477,7 @@ export function setBar(opts) {
     const cur = current(), f = fam();
     curName.textContent = cur ? `● ${FAM_PFX[store.type(cur)] || "?"} · ${cur}` : "세트 저장 안 됨";
     curName.style.color = cur ? T.text : T.dim;
-    curName.title = (cur ? `지금 LoRA 목록 = 세트 '${cur}'` : "지금 LoRA 목록과 같은 세트가 없습니다") + "\n저장 위치: " + (store.data.folder || "?");
+    curName.title = (cur ? `지금 LoRA 목록 = 세트 '${cur}'` + (store.model(cur) ? `\n저장할 때 모델: ${modelShort(store.model(cur))}` : "") : "지금 LoRA 목록과 같은 세트가 없습니다") + "\n저장 위치: " + (store.data.folder || "?");
     saveB.style.borderColor = st.saving ? T.accent2 : T.line;
     saveRow.innerHTML = "";
     saveRow.style.display = st.saving ? "flex" : "none";
@@ -470,7 +491,7 @@ export function setBar(opts) {
         if (store.data.sets?.[n] && ot && ot !== f && !confirm(`'${n}'은(는) ${FAM_NAME[ot]}용 세트입니다. ${FAM_NAME[f]}용으로 덮어쓸까요?`)) return;
         st.saving = false;
         try {
-          await store.put(n, getL(), f, opts.saveP ? opts.saveP() : getP ? (getP() || "") : undefined);
+          await store.put(n, getL(), f, opts.saveP ? opts.saveP() : getP ? (getP() || "") : undefined, opts.getModel ? opts.getModel() || "" : undefined);
           // 썸네일: opts.thumbFiles() 가 돌려준 그림(지금 보고 있는 미리보기 등)을 세트에 같이 붙임
           const tf = opts.thumbFiles?.() || [];
           let withImg = false;

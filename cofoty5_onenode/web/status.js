@@ -8,8 +8,10 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const toast = (msg, severity = "info", life = 4000) => {
-  try { app.extensionManager?.toast?.add({ severity, summary: msg, life }); } catch {}
+const toastMs = (s, l) => (l === "model" ? 6000 : ({ info: 2000, success: 2000, warn: 4000, error: 6000 }[s] ?? 2000)); // 알림 유지: 안내 2초 · 경고 4초 · 오류/모델 경고 6초
+
+const toast = (msg, severity = "info", life) => {
+  try { app.extensionManager?.toast?.add({ severity, summary: msg, life: toastMs(severity, life) }); } catch {}
   console.log("[cofoty5_onenode]", msg);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
